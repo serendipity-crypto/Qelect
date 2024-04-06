@@ -1,74 +1,26 @@
 #include "regevEncryption.h"
+#include "thresholdEncryption.h"
 #include "global.h"
 #include "util.h"
 #include "seal/seal.h"
 #include "seal/util/iterator.h"
 #include <numeric>
 #include <stdio.h>
+#include <NTL/BasicThreadPool.h>
+#include <NTL/ZZ.h>
+#include <thread>
 
 using namespace seal;
 using namespace std;
 
 
-
-void print_ct_to_pl(Ciphertext& ct, SEALContext& context, SecretKey& sk, uint64_t ring_dim = 4) {
-  Decryptor decryptor(context, sk);
-  Plaintext pp;
-  decryptor.decrypt(ct, pp);
-  for (int i = 0; i < (int) ring_dim; i++) {
-    cout << pp.data()[i] << " ";
-  }
-  cout << endl;
-}
-
-
-void print_ct_to_vec(Ciphertext& ct, SEALContext& context, SecretKey& sk, uint64_t ring_dim = 4) {
-  Decryptor decryptor(context, sk);
-  BatchEncoder batch_encoder(context);
-  Plaintext pp;
-  vector<uint64_t> msg(ring_dim);
-  decryptor.decrypt(ct, pp);
-  batch_encoder.decode(pp, msg);
-
-  cout << msg << endl;
-}
-
-
-inline
-void EvalMultMany_inpace_modImprove(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys,
-				    const SEALContext& context, SecretKey& sk) {
-    Evaluator evaluator(context);
-    Decryptor decryptor(context, sk);
-    int counter = 0;
-
-    while(ciphertexts.size() != 1){
-        for(size_t i = 0; i < ciphertexts.size()/2; i++){
-            evaluator.multiply_inplace(ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
-            evaluator.relinearize_inplace(ciphertexts[i], relin_keys);
-            if(counter & 1) {
-                evaluator.mod_switch_to_next_inplace(ciphertexts[i]);
-            }
-        }
-        if(ciphertexts.size()%2 == 0)
-            ciphertexts.resize(ciphertexts.size()/2);
-        else{ // if odd, take the last one and mod down to make them compatible
-            ciphertexts[ciphertexts.size()/2] = ciphertexts[ciphertexts.size()-1];
-            if(counter & 1) {
-                evaluator.mod_switch_to_next_inplace(ciphertexts[ciphertexts.size()/2]);
-            }
-            ciphertexts.resize(ciphertexts.size()/2+1);
-        }
-        counter += 1;
-    }
-
-}
-
-
 int main() {
   
-    int ring_dim = 2048; // for 200 people, can encrypt ring_dim / 200 Z_p element
+    int ring_dim = 8192; // for 200 people, can encrypt ring_dim / 200 Z_p element
     int n = 512;
     int p = 65537;
+
+	int numcores = 2;
 
     int group_size = 256;
     int batch_size = ring_dim / group_size;
@@ -218,18 +170,18 @@ int main() {
     pp.resize(ring_dim);
     pp.parms_id() = parms_id_zero;
     for (int i = 0; i < (int) perms.size(); i++) {
-      for (int j = 0; j < (int) ring_dim; j++) {
-	pp.data()[j] = 0;
-      }
-      if (i == 0) {
-	pp.data()[2] = 1; // [0, 0, 1, 0,...]
-	// for (int b = 0; b < batch_size; b++) {
-	//   pp.data()[2 + b * group_size] = 1; // [0,0,1,0]
-	// }
-      } else {
-	pp.data()[0] = 1; // [1,0,0,0], notice that following ciphertext no need to repeat
-      }
-      encryptor.encrypt(pp, perms[i]);
+		for (int j = 0; j < (int) ring_dim; j++) {
+			pp.data()[j] = 0;
+		}
+		if (i == 0) {
+			pp.data()[2] = 1; // [0, 0, 1, 0,...]
+			// for (int b = 0; b < batch_size; b++) {
+			//   pp.data()[2 + b * group_size] = 1; // [0,0,1,0]
+			// }
+		} else {
+			pp.data()[0] = 1; // [1,0,0,0], notice that following ciphertext no need to repeat
+		}
+		encryptor.encrypt(pp, perms[i]);
     }
 
     cout << "--[NOISE]-- initial: " << decryptor.invariant_noise_budget(perms[0]) << endl;
@@ -239,54 +191,96 @@ int main() {
     // prepare ring_dim different tokens, each is of size ring_dim, in plaintext form
     vector<Plaintext> tokens(ring_dim); 
     for (int i = 0; i < (int) tokens.size(); i++) {
-      tokens[i].resize(ring_dim);
-      tokens[i].parms_id() = parms_id_zero;
-      for (int j = 0; j < (int) ring_dim; j++) {
-	tokens[i].data()[j] = random_uint64() % 65537;
-	// if (i == 2) {
-	//   cout << tokens[i].data()[j] << " ";
-	// }
-      }
+		tokens[i].resize(ring_dim);
+		tokens[i].parms_id() = parms_id_zero;
+		for (int j = 0; j < (int) ring_dim; j++) {
+			tokens[i].data()[j] = random_uint64() % 65537;
+			// if (i == 2) {
+			//   cout << tokens[i].data()[j] << " ";
+			// }
+		}
     }
     cout << "After generation" << endl;
 
     chrono::high_resolution_clock::time_point time_start, time_end;
+	uint64_t total_time = 0;
     time_start = chrono::high_resolution_clock::now();
 
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // multiply all perm vec ciphertexts, log(n) depth of ct-multi
-    EvalMultMany_inpace_modImprove(perms, relin_keys, seal_context, bfv_secret_key);
 
-    Ciphertext final_perm_vec = perms[0];
+    NTL::SetNumThreads(numcores);
+	vector<Ciphertext> perm_share_final(numcores);
+	uint64_t batch_perm_size = perms.size() / numcores;
+    NTL_EXEC_RANGE(numcores, first, last);
+	vector<Ciphertext>::const_iterator b = perms.begin();
+    for (int i = first; i < last; i++) {
+		vector<Ciphertext> perms_share(b + i*batch_perm_size , b + (i+1)*batch_perm_size);
+    	perm_share_final[i] = EvalMultMany_inpace_modImprove(perms_share, relin_keys, seal_context, bfv_secret_key);
+    }
+	NTL_EXEC_RANGE_END;
+	EvalMultMany_inpace_modImprove(perm_share_final, relin_keys, seal_context, bfv_secret_key);
+
+	// perms[0] = EvalMultMany_inpace_modImprove(perms, relin_keys, seal_context, bfv_secret_key);
+
+	time_end = chrono::high_resolution_clock::now();
+	cout << "** [TIME] ** EvalMultMany_inpace_modImprove: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+	total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+	
+	cout << "--[NOISE]-- after multiply to single perm vector: " << decryptor.invariant_noise_budget(perm_share_final[0]) << endl;
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+	time_start = chrono::high_resolution_clock::now();
+    Ciphertext final_perm_vec = perm_share_final[0];
     // print_ct_to_pl(final_perm_vec, seal_context, bfv_secret_key, ring_dim);
-    cout << "--[NOISE]-- after multiply to single perm vector: " << decryptor.invariant_noise_budget(final_perm_vec) << endl;
-
-
-    // encryptor.encrypt(tokens[0], final_perm_vec);
-
+    
     // oblivious expand the result into ring_dim ciphertexts, each encode the 0 or token value as the constant
     vector<Ciphertext> expanded = expand(seal_context, bfv_params, bfv_secret_key, final_perm_vec, ring_dim, gal_keys_expand);
     // print_ct_to_pl(expanded[2], seal_context, bfv_secret_key, ring_dim);
 
+	time_end = chrono::high_resolution_clock::now();
+	cout << "** [TIME] ** expand: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+	total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     // multiply the plaintext token together with the expanded 0/1 plaintext vector
+	time_start = chrono::high_resolution_clock::now();
     Ciphertext result;
 
     for (int i = 0; i < 4; i++) {
-    for (int i = 0; i < ring_dim; i++) {
-      if (i == 0) {
-	evaluator.multiply_plain(expanded[i], tokens[i], result);
-      } else {
-	Ciphertext tmp;
-	evaluator.multiply_plain(expanded[i], tokens[i], tmp);
-	evaluator.add_inplace(result, tmp);
-      }
-    }
+		for (int i = 0; i < ring_dim; i++) {
+			if (i == 0) {
+				evaluator.multiply_plain(expanded[i], tokens[i], result);
+			} else {
+				Ciphertext tmp;
+				evaluator.multiply_plain(expanded[i], tokens[i], tmp);
+				evaluator.add_inplace(result, tmp);
+			}
+		}
     }
     
-
     time_end = chrono::high_resolution_clock::now();
-    cout << "*** TOTAL time: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-    
+	cout << "** [TIME] ** multiply with pk: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+	cout << "****** TOTAL time: " << total_time << endl;
+
+
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
 
     cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result) << endl;
     // print_ct_to_pl(result, seal_context, bfv_secret_key, ring_dim);

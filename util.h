@@ -7,6 +7,62 @@ using namespace std;
 using namespace seal;
 
 
+void print_ct_to_pl(Ciphertext& ct, SEALContext& context, SecretKey& sk, uint64_t ring_dim = 4) {
+  Decryptor decryptor(context, sk);
+  Plaintext pp;
+  decryptor.decrypt(ct, pp);
+  for (int i = 0; i < (int) ring_dim; i++) {
+    cout << pp.data()[i] << " ";
+  }
+  cout << endl;
+}
+
+
+void print_ct_to_vec(Ciphertext& ct, SEALContext& context, SecretKey& sk, uint64_t ring_dim = 4) {
+  Decryptor decryptor(context, sk);
+  BatchEncoder batch_encoder(context);
+  Plaintext pp;
+  vector<uint64_t> msg(ring_dim);
+  decryptor.decrypt(ct, pp);
+  batch_encoder.decode(pp, msg);
+
+  cout << msg << endl;
+}
+
+
+inline
+Ciphertext EvalMultMany_inpace_modImprove(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys,
+				    const SEALContext& context, SecretKey& sk) {
+    Evaluator evaluator(context);
+    Decryptor decryptor(context, sk);
+    int counter = 0;
+
+    while(ciphertexts.size() != 1){
+        for(size_t i = 0; i < ciphertexts.size()/2; i++){
+            evaluator.multiply_inplace(ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
+            evaluator.relinearize_inplace(ciphertexts[i], relin_keys);
+            if(counter & 1) {
+                evaluator.mod_switch_to_next_inplace(ciphertexts[i]);
+            }
+        }
+        if(ciphertexts.size()%2 == 0)
+            ciphertexts.resize(ciphertexts.size()/2);
+        else{ // if odd, take the last one and mod down to make them compatible
+            ciphertexts[ciphertexts.size()/2] = ciphertexts[ciphertexts.size()-1];
+            if(counter & 1) {
+                evaluator.mod_switch_to_next_inplace(ciphertexts[ciphertexts.size()/2]);
+            }
+            ciphertexts.resize(ciphertexts.size()/2+1);
+        }
+        counter += 1;
+    }
+
+    Ciphertext res = ciphertexts[0];
+
+    return res;
+
+}
+
 
 inline
 long power(long x, long y, long m)
