@@ -16,11 +16,11 @@ using namespace std;
 
 int main() {
   
-    int ring_dim = 8192; // for 200 people, can encrypt ring_dim / 200 Z_p element
+    int ring_dim = 2048; // for 200 people, can encrypt ring_dim / 200 Z_p element
     int n = 512;
     int p = 65537;
 
-	int numcores = 2;
+	int numcores = 8;
 
     int group_size = 256;
     int batch_size = ring_dim / group_size;
@@ -257,18 +257,21 @@ int main() {
     // multiply the plaintext token together with the expanded 0/1 plaintext vector
 	time_start = chrono::high_resolution_clock::now();
     Ciphertext result;
+    evaluator.multiply_plain(expanded[0], tokens[0], result);
 
-    for (int i = 0; i < 4; i++) {
-		for (int i = 0; i < ring_dim; i++) {
-			if (i == 0) {
-				evaluator.multiply_plain(expanded[i], tokens[i], result);
-			} else {
-				Ciphertext tmp;
-				evaluator.multiply_plain(expanded[i], tokens[i], tmp);
-				evaluator.add_inplace(result, tmp);
-			}
-		}
+    // NTL::SetNumThreads(numcores);
+    NTL_EXEC_RANGE(numcores, first, last);
+    int batch_share = ring_dim/numcores;
+    for (int t = first; t < last; t++) {
+        for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
+            if (i != 0) { // skip the first one, done outside the loop already
+                Ciphertext tmp;
+                evaluator.multiply_plain(expanded[i], tokens[i], tmp);
+                evaluator.add_inplace(result, tmp);
+            }
+        }
     }
+    NTL_EXEC_RANGE_END;
     
     time_end = chrono::high_resolution_clock::now();
 	cout << "** [TIME] ** multiply with pk: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
