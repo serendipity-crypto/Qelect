@@ -16,11 +16,11 @@ using namespace std;
 
 int main() {
   
-    int ring_dim = 2048; // for 200 people, can encrypt ring_dim / 200 Z_p element
+    int ring_dim = 8192; // for 200 people, can encrypt ring_dim / 200 Z_p element
     int n = 512;
     int p = 65537;
 
-	int numcores = 8;
+	int numcores = 1;
 
     int group_size = 256;
     int batch_size = ring_dim / group_size;
@@ -29,8 +29,8 @@ int main() {
     EncryptionParameters bfv_params(scheme_type::bfv);
     bfv_params.set_poly_modulus_degree(ring_dim);
     auto coeff_modulus = CoeffModulus::Create(ring_dim, { 30, 60, 60, 60,  
-                                                          60, 60, 60, 60,
-                                                          60, 60,60, 60, 60});
+                                                          60, 60, 60, 60
+                                                          });
     bfv_params.set_coeff_modulus(coeff_modulus);
     bfv_params.set_plain_modulus(p);
 
@@ -103,64 +103,11 @@ int main() {
     }
     keygen.create_galois_keys(galois_elts, gal_keys_expand);
 
-    // // [0,0,1,0] * [0,1,0,0]
-    // Plaintext plainInd1, plainInd2;
-    // plainInd1.resize(ring_dim);
-    // plainInd1.parms_id() = parms_id_zero;
-    // for (int i = 0; i < (int) ring_dim; i++) {
-    //     plainInd1.data()[i] = 0;
-    // }
-    // plainInd1.data()[2] = 1;
 
-    // plainInd2.resize(ring_dim);
-    // plainInd2.parms_id() = parms_id_zero;
-    // for (int i = 0; i < (int) ring_dim; i++) {
-    //     plainInd2.data()[i] = 0;
-    // }
-    // plainInd2.data()[3] = 65536;
-
-    // Ciphertext c;
-    // encryptor.encrypt(plainInd2, c);
-    // evaluator.multiply_plain_inplace(c, plainInd1);
-
-    // decryptor.decrypt(c, plainInd2);
-    // for (int i = 0; i < (int) ring_dim; i++) {
-    //     cout << plainInd2.data()[i] << " ";
-    // }
-    // cout << endl;
-
-
-    // cout << "-----------------------------------------------------\n";
-
-
-
-    // Plaintext ppp;
-    // ppp.resize(ring_dim);
-    // ppp.parms_id() = parms_id_zero;
-    // for (int j = 0; j < (int) ring_dim; j++) {
-    //   ppp.data()[j] = 1;
-    // }
-    // ppp.data()[101] = 1;
-    // ppp.data()[10] = 1;
-    // Ciphertext ccc;
-    // encryptor.encrypt(ppp, ccc);
-    
-
-    // map<int, bool> raise_mod = {{4, false}, {16, false}, {64, false}, {256, false}};
-    // Ciphertext tmp = raisePowerToPrime(seal_context, relin_keys, ccc, raise_mod, raise_mod,
-    // 				       256, 256, p);
-
-    // decryptor.decrypt(tmp, ppp);
-    // for (int j = 0; j < (int) ring_dim; j++) {
-    //   cout << ppp.data()[j] << " ";
-    // }
-    // cout << endl;
-
-
-    // cout << "-----------------------------------------------------\n";
-
-
-
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     
     // prepare 256 permutation vectors, representing the first row of a permutation matrix
@@ -175,9 +122,6 @@ int main() {
 		}
 		if (i == 0) {
 			pp.data()[2] = 1; // [0, 0, 1, 0,...]
-			// for (int b = 0; b < batch_size; b++) {
-			//   pp.data()[2 + b * group_size] = 1; // [0,0,1,0]
-			// }
 		} else {
 			pp.data()[0] = 1; // [1,0,0,0], notice that following ciphertext no need to repeat
 		}
@@ -219,12 +163,10 @@ int main() {
 	vector<Ciphertext>::const_iterator b = perms.begin();
     for (int i = first; i < last; i++) {
 		vector<Ciphertext> perms_share(b + i*batch_perm_size , b + (i+1)*batch_perm_size);
-    	perm_share_final[i] = EvalMultMany_inpace_modImprove(perms_share, relin_keys, seal_context, bfv_secret_key);
+    	perm_share_final[i] = EvalMultMany_inpace_modImprove(perms, relin_keys, seal_context, bfv_secret_key);
     }
 	NTL_EXEC_RANGE_END;
-	EvalMultMany_inpace_modImprove(perm_share_final, relin_keys, seal_context, bfv_secret_key);
-
-	// perms[0] = EvalMultMany_inpace_modImprove(perms, relin_keys, seal_context, bfv_secret_key);
+	Ciphertext final_perm_vec = EvalMultMany_inpace_modImprove(perm_share_final, relin_keys, seal_context, bfv_secret_key);
 
 	time_end = chrono::high_resolution_clock::now();
 	cout << "** [TIME] ** EvalMultMany_inpace_modImprove: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
@@ -232,18 +174,17 @@ int main() {
 	
 	cout << "--[NOISE]-- after multiply to single perm vector: " << decryptor.invariant_noise_budget(perm_share_final[0]) << endl;
 
+
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	time_start = chrono::high_resolution_clock::now();
-    Ciphertext final_perm_vec = perm_share_final[0];
-    // print_ct_to_pl(final_perm_vec, seal_context, bfv_secret_key, ring_dim);
-
-
     vector<Ciphertext> expanded_subtree_roots = subExpand(bfv_secret_key, seal_context, bfv_params, final_perm_vec,
                                                           ring_dim, gal_keys_expand, numcores);
+
+    print_ct_to_pl(expanded_subtree_roots[0], seal_context, bfv_secret_key, ring_dim);
     
     // oblivious expand the result into ring_dim ciphertexts, each encode the 0 or token value as the constant
 
@@ -251,12 +192,12 @@ int main() {
 
     NTL_EXEC_RANGE(numcores, first, last);
     for (int i = first; i < last; i++) {
-
         expanded[i] = expand(seal_context, bfv_params, expanded_subtree_roots[i], ring_dim, gal_keys_expand,
                              ring_dim/numcores);
-        // print_ct_to_pl(expanded[2], seal_context, bfv_secret_key, ring_dim);
     }
     NTL_EXEC_RANGE_END;
+
+    // print_ct_to_pl(expanded[0][0], seal_context, bfv_secret_key, ring_dim);
 
 
 	time_end = chrono::high_resolution_clock::now();
@@ -270,14 +211,11 @@ int main() {
 
     // multiply the plaintext token together with the expanded 0/1 plaintext vector
 	time_start = chrono::high_resolution_clock::now();
-    // Ciphertext result;
     vector<Ciphertext> result_tmp(numcores);
-    // evaluator.multiply_plain(expanded[0][0], tokens[0], result);
 
-    cout << "--[NOISE]-- expanded noise: " << decryptor.invariant_noise_budget(expanded[0][0]) << endl;
+    // cout << "--[NOISE]-- expanded noise: " << decryptor.invariant_noise_budget(expanded[0][0]) << endl;
     // cout << "--[NOISE]-- initial result noise: " << decryptor.invariant_noise_budget(result) << endl;
 
-    // NTL::SetNumThreads(numcores);
     NTL_EXEC_RANGE(numcores, first, last);
     int batch_share = ring_dim/numcores;
     for (int t = first; t < last; t++) {
@@ -293,7 +231,7 @@ int main() {
     }
     NTL_EXEC_RANGE_END;
 
-    cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result_tmp[0]) << endl;
+    // cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result_tmp[0]) << endl;
 
     for (int i = 1; i < (int) result_tmp.size(); i++) {
         evaluator.add_inplace(result_tmp[0], result_tmp[i]);
@@ -314,152 +252,5 @@ int main() {
     cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result_tmp[0]) << endl;
     // print_ct_to_pl(result, seal_context, bfv_secret_key, ring_dim);
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    // // multiply all perm vec ciphertexts, log(n) depth of ct-multi
-    // EvalMultMany_inpace_modImprove(perms, relin_keys, seal_context, bfv_secret_key);
-
-    // Ciphertext final_perm_vec = perms[0];
-    // print_ct_to_pl(final_perm_vec, seal_context, bfv_secret_key, ring_dim);
-    // cout << "--[NOISE]-- after multiply to single perm vector: " << decryptor.invariant_noise_budget(final_perm_vec) << endl;
-
-
-    // // inverse_slotToCoeff perm vector into slot values, preparing for multiplying with tokens
-    // int sq_ct = sqrt(ring_dim/2);
-    // vector<Ciphertext> packSIC_sqrt_list(2*sq_ct);
-    // Ciphertext final_copy(final_perm_vec);
-    // evaluator.rotate_columns_inplace(final_copy, gal_keys_slotToCoeff);
-
-    // packSIC_sqrt_list[0] = final_perm_vec;
-    // packSIC_sqrt_list[sq_ct] = final_copy;
-
-    // for (int c = 1; c < sq_ct; c++) {
-    //   evaluator.rotate_rows(packSIC_sqrt_list[c-1], sq_ct, gal_keys_slotToCoeff, packSIC_sqrt_list[c]);
-    //   evaluator.rotate_rows(packSIC_sqrt_list[c-1+sq_ct], sq_ct, gal_keys_slotToCoeff, packSIC_sqrt_list[c+sq_ct]);
-    // }
-    // for (int c = 0; c < sq_ct; c++) {
-    //   evaluator.transform_to_ntt_inplace(packSIC_sqrt_list[c]);
-    //   evaluator.transform_to_ntt_inplace(packSIC_sqrt_list[c+sq_ct]);
-    // }
-    // Ciphertext perm_val = inverse_slotToCoeff_WOPrepreocess(seal_context, seal_context, packSIC_sqrt_list,
-    // 							    gal_keys_slotToCoeff, ring_dim, p);
-    // cout << "--[NOISE]-- after coeff to slot: " << decryptor.invariant_noise_budget(perm_val) << endl;
-
-    // print_ct_to_vec(perm_val, seal_context, bfv_secret_key, ring_dim);
-
-
-    // // multiply with the tokens (represented also in slot value)
-    // vector<uint64_t> token(ring_dim);
-    // for (int i = 0; i < (int) token.size(); i++) {
-    //   token[i] = random_uint64() % 65537;
-    // }
-    // cout << "==================================== Token ====================================\n";
-    // for (int i = 0; i < group_size; i++) {
-    //   for (int j = 0; j < batch_size; j++) {
-    // 	cout << token[j*group_size + i] << " ";
-    //   }
-    //   cout << endl;
-    // }
-    // cout << "===============================================================================\n";
-    // Plaintext token_pl;
-    // batch_encoder.encode(token, token_pl);
-    // evaluator.multiply_plain_inplace(perm_val, token_pl);
-    // // print_ct_to_vec(perm_val, seal_context, bfv_secret_key, ring_dim);
-    // cout << "--[NOISE]-- after multiply plain with token: " << decryptor.invariant_noise_budget(perm_val) << endl;
-
-    // // slotToCoeff, prepare for oblivious expansion which happens on the plaintext level
-    // uint64_t inv = modInverse(ring_dim, p);
-    // Ciphertext perm_copy(perm_val);
-    // evaluator.rotate_columns_inplace(perm_copy, gal_keys_slotToCoeff);
-
-    // packSIC_sqrt_list[0] = perm_val;
-    // packSIC_sqrt_list[sq_ct] = perm_copy;
-
-    // for (int c = 1; c < sq_ct; c++) {
-    //   evaluator.rotate_rows(packSIC_sqrt_list[c-1], sq_ct, gal_keys_slotToCoeff, packSIC_sqrt_list[c]);
-    //   evaluator.rotate_rows(packSIC_sqrt_list[c-1+sq_ct], sq_ct, gal_keys_slotToCoeff, packSIC_sqrt_list[c+sq_ct]);
-    // }
-    // for (int c = 0; c < sq_ct; c++) {
-    //   evaluator.transform_to_ntt_inplace(packSIC_sqrt_list[c]);
-    //   evaluator.transform_to_ntt_inplace(packSIC_sqrt_list[c+sq_ct]);
-    // }
-    // Ciphertext selected_token = slotToCoeff_WOPrepreocess(seal_context, seal_context, packSIC_sqrt_list,
-    // 							  gal_keys_slotToCoeff, ring_dim, p, inv);
-
-    // // oblivious expand the result into ring_dim ciphertexts, each encode the 0 or token value as the constant
-    // vector<Ciphertext> expanded = expand(seal_context, bfv_params, bfv_secret_key, selected_token, ring_dim, gal_keys_expand);
-    // print_ct_to_pl(expanded[2], seal_context, bfv_secret_key, ring_dim);
-    // print_ct_to_pl(expanded[10], seal_context, bfv_secret_key, ring_dim);
-    // print_ct_to_pl(expanded[18], seal_context, bfv_secret_key, ring_dim);
-    // print_ct_to_pl(expanded[26], seal_context, bfv_secret_key, ring_dim);
-
-    // vector<Ciphertext> rotated(batch_size);
-    // rotated[0] = expanded[2];
-    // for (int i = 0; i < ring_dim; i++) {
-    //   pp.data()[i] = 0;
-    // }
-    // pp.data()[1] = 1;
-    // evaluator.multiply_plain(expanded[10], pp, rotated[1]);
-
-    // for (int i = 0; i < ring_dim; i++) {
-    //   pp.data()[i] = 0;
-    // }
-    // pp.data()[2] = 1;
-    // evaluator.multiply_plain(expanded[18], pp, rotated[2]);
-
-    // for (int i = 0; i < ring_dim; i++) {
-    //   pp.data()[i] = 0;
-    // }
-    // pp.data()[3] = 1;
-    // evaluator.multiply_plain(expanded[26], pp, rotated[3]);
-
-    // evaluator.add_inplace(rotated[0], rotated[1]);
-    // evaluator.add_inplace(rotated[2], rotated[3]);
-    // evaluator.add_inplace(rotated[0], rotated[2]);
-    
-    // // Ciphertext test;
-    // // for (int i = 0; i < ring_dim; i++) {
-    // //   pp.data()[i] = 0;
-    // // }
-    // // evaluator.add_plain(expanded[0], pp, test);
-    // // // evaluator.add(expanded[1], expanded[2], test);
-
-    // // // Plaintext pp;
-    // // for (int i = 0; i < ring_dim; i++) {
-    // //   pp.data()[i] = 0;
-    // // }
-    // // pp.data()[0] = 1;
-    // // evaluator.multiply_plain_inplace(test, pp);
-    // // print_ct_to_pl(test, seal_context, bfv_secret_key, ring_dim);
-
-    // // // vector<Ciphertext> selected_token_batch(batch_size);
-    // // // for (int i = 0; i < batch_size; i++) {
-    // // //   selected_token_batch[i] = expanded[i * group_size];
-    // // //   for (int j = 1; j < group_size; j++) {
-    // // //   	evaluator.add_inplace(selected_token_batch[i], expanded[i * group_size + j]);
-    // // //   }
-    // // // }
-
-    // cout << "--[NOISE]-- after oblivious expansion: " << decryptor.invariant_noise_budget(rotated[0]) << endl;
-
-    // time_end = chrono::high_resolution_clock::now();
-    // cout << "*** TOTAL time: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-
-    // print_ct_to_pl(rotated[0], seal_context, bfv_secret_key, ring_dim);
     return 0;
 }
