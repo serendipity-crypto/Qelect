@@ -30,7 +30,7 @@ int main() {
     bfv_params.set_poly_modulus_degree(ring_dim);
     auto coeff_modulus = CoeffModulus::Create(ring_dim, { 30, 60, 60, 60,  
                                                           60, 60, 60, 60,
-                                                          60 });
+                                                          60, 60,60, 60, 60});
     bfv_params.set_coeff_modulus(coeff_modulus);
     bfv_params.set_plain_modulus(p);
 
@@ -240,10 +240,24 @@ int main() {
 	time_start = chrono::high_resolution_clock::now();
     Ciphertext final_perm_vec = perm_share_final[0];
     // print_ct_to_pl(final_perm_vec, seal_context, bfv_secret_key, ring_dim);
+
+
+    vector<Ciphertext> expanded_subtree_roots = subExpand(bfv_secret_key, seal_context, bfv_params, final_perm_vec,
+                                                          ring_dim, gal_keys_expand, numcores);
     
     // oblivious expand the result into ring_dim ciphertexts, each encode the 0 or token value as the constant
-    vector<Ciphertext> expanded = expand(seal_context, bfv_params, bfv_secret_key, final_perm_vec, ring_dim, gal_keys_expand);
-    // print_ct_to_pl(expanded[2], seal_context, bfv_secret_key, ring_dim);
+
+    vector<vector<Ciphertext>> expanded(numcores, vector<Ciphertext>(ring_dim/numcores));
+
+    NTL_EXEC_RANGE(numcores, first, last);
+    for (int i = first; i < last; i++) {
+
+        expanded[i] = expand(seal_context, bfv_params, expanded_subtree_roots[i], ring_dim, gal_keys_expand,
+                             ring_dim/numcores);
+        // print_ct_to_pl(expanded[2], seal_context, bfv_secret_key, ring_dim);
+    }
+    NTL_EXEC_RANGE_END;
+
 
 	time_end = chrono::high_resolution_clock::now();
 	cout << "** [TIME] ** expand: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
@@ -256,22 +270,34 @@ int main() {
 
     // multiply the plaintext token together with the expanded 0/1 plaintext vector
 	time_start = chrono::high_resolution_clock::now();
-    Ciphertext result;
-    evaluator.multiply_plain(expanded[0], tokens[0], result);
+    // Ciphertext result;
+    vector<Ciphertext> result_tmp(numcores);
+    // evaluator.multiply_plain(expanded[0][0], tokens[0], result);
+
+    cout << "--[NOISE]-- expanded noise: " << decryptor.invariant_noise_budget(expanded[0][0]) << endl;
+    // cout << "--[NOISE]-- initial result noise: " << decryptor.invariant_noise_budget(result) << endl;
 
     // NTL::SetNumThreads(numcores);
     NTL_EXEC_RANGE(numcores, first, last);
     int batch_share = ring_dim/numcores;
     for (int t = first; t < last; t++) {
         for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
-            if (i != 0) { // skip the first one, done outside the loop already
+            if (i % batch_share == 0) { // skip the first one, done outside the loop already
+                evaluator.multiply_plain(expanded[t][0], tokens[i], result_tmp[t]);
+            } else {
                 Ciphertext tmp;
-                evaluator.multiply_plain(expanded[i], tokens[i], tmp);
-                evaluator.add_inplace(result, tmp);
+                evaluator.multiply_plain(expanded[t][i % batch_share], tokens[i], tmp);
+                evaluator.add_inplace(result_tmp[t], tmp);
             }
         }
     }
     NTL_EXEC_RANGE_END;
+
+    cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result_tmp[0]) << endl;
+
+    for (int i = 1; i < (int) result_tmp.size(); i++) {
+        evaluator.add_inplace(result_tmp[0], result_tmp[i]);
+    }
     
     time_end = chrono::high_resolution_clock::now();
 	cout << "** [TIME] ** multiply with pk: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
@@ -285,7 +311,7 @@ int main() {
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-    cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result) << endl;
+    cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result_tmp[0]) << endl;
     // print_ct_to_pl(result, seal_context, bfv_secret_key, ring_dim);
 
 

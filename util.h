@@ -83,7 +83,8 @@ long modInverse(long a, long m)
 
 
 vector<regevCiphertext> extractRLWECiphertextToLWECiphertext(Ciphertext& rlwe_ct, const int ring_dim = poly_modulus_degree_glb,
-                                                             const int n = 1024, const int p = prime_p, const uint64_t big_prime = 1152921504589938689) {
+                                                             const int n = 1024, const int p = prime_p,
+                                                             const uint64_t big_prime = 1152921504589938689) {
     vector<regevCiphertext> results(ring_dim);
 
     prng_seed_type seed;
@@ -132,7 +133,8 @@ vector<regevCiphertext> extractRLWECiphertextToLWECiphertext(Ciphertext& rlwe_ct
 
 
 
-inline void multiply_power_of_X(EncryptionParameters& enc_param, const Ciphertext &encrypted, Ciphertext &destination, uint32_t index) {
+inline void multiply_power_of_X(EncryptionParameters& enc_param, const Ciphertext &encrypted, Ciphertext &destination,
+                                uint32_t index) {
 
     auto coeff_mod_count = enc_param.coeff_modulus().size() - 1;
     auto coeff_count = enc_param.poly_modulus_degree();
@@ -150,12 +152,126 @@ inline void multiply_power_of_X(EncryptionParameters& enc_param, const Ciphertex
     }
 }
 
+inline vector<Ciphertext> subExpand(const SecretKey& sk, const SEALContext& context, EncryptionParameters& enc_param,
+                                    const Ciphertext &encrypted, uint32_t m, const GaloisKeys& galkey,
+                                    int first_expansion_size, int t = 65537) {
+
+    Evaluator evaluator(context);
+    Plaintext two("2");
+    Decryptor decryptor(context, sk);
+
+    int logFirst = ceil(log2(first_expansion_size));
+
+    vector<int> galois_elts;
+
+    for (int i = 0; i < ceil(log2(m)); i++) {
+        galois_elts.push_back((m + exponentiate_uint(2, i)) / exponentiate_uint(2, i));
+    }
+
+    vector<Ciphertext> temp;
+    temp.push_back(encrypted);
+    Ciphertext tempctxt;
+    Ciphertext tempctxt_rotated;
+    Ciphertext tempctxt_shifted;
+    Ciphertext tempctxt_rotatedshifted;
+
+    for (int i = 0; i < logFirst; i++) {
+        vector<Ciphertext> newtemp(temp.size() << 1);
+        int index_raw = (m << 1) - (1 << i);
+        int index = (index_raw * galois_elts[i]) % (m << 1);
+
+        for (uint32_t a = 0; a < temp.size(); a++) {
+
+            evaluator.apply_galois(temp[a], galois_elts[i], galkey, tempctxt_rotated);
+            evaluator.add(temp[a], tempctxt_rotated, newtemp[a]);
+            multiply_power_of_X(enc_param, temp[a], tempctxt_shifted, index_raw);
+            multiply_power_of_X(enc_param, tempctxt_rotated, tempctxt_rotatedshifted, index);
+            evaluator.add(tempctxt_shifted, tempctxt_rotatedshifted, newtemp[a + temp.size()]);
+        }
+
+        temp = newtemp;
+    }
+
+    vector<Ciphertext>::const_iterator first = temp.begin();
+    vector<Ciphertext>::const_iterator last = temp.begin() + first_expansion_size;
+    vector<Ciphertext> newVec(first, last);
+
+    return newVec;
+}
+
+inline vector<Ciphertext> expand(const SEALContext& context, EncryptionParameters& enc_param, const Ciphertext &encrypted,
+                                 uint32_t m, const GaloisKeys& galkey, int stepSize = 1, int t = 65537) {
+
+    Evaluator evaluator(context);
+    Plaintext two("2");
+
+    int first_expansion_size = m / stepSize;
+    int logFirst = ceil(log2(first_expansion_size));
+    int logm = ceil(log2(m));
+
+    vector<int> galois_elts;
+
+    for (int i = 0; i < ceil(log2(m)); i++) {
+        galois_elts.push_back((m + exponentiate_uint(2, i)) / exponentiate_uint(2, i));
+    }
+
+    vector<Ciphertext> temp;
+    temp.push_back(encrypted);
+    Ciphertext tempctxt;
+    Ciphertext tempctxt_rotated;
+    Ciphertext tempctxt_shifted;
+    Ciphertext tempctxt_rotatedshifted;
+
+    for (int i = logFirst; i < logm - 1; i++) {
+        vector<Ciphertext> newtemp(temp.size() << 1);
+        int index_raw = (m << 1) - (1 << i);
+        int index = (index_raw * galois_elts[i]) % (m << 1);
+
+        for (int a = 0; a < (int) temp.size(); a++) {
+
+            evaluator.apply_galois(temp[a], galois_elts[i], galkey, tempctxt_rotated);
+
+            evaluator.add(temp[a], tempctxt_rotated, newtemp[a]);
+            multiply_power_of_X(enc_param, temp[a], tempctxt_shifted, index_raw);
+            multiply_power_of_X(enc_param, tempctxt_rotated, tempctxt_rotatedshifted, index);
+
+            evaluator.add(tempctxt_shifted, tempctxt_rotatedshifted, newtemp[a + temp.size()]);
+        }
+
+        temp = newtemp;
+    }
+
+    // Last step of the loop
+    vector<Ciphertext> newtemp(temp.size() << 1);
+    int index_raw = (m << 1) - (1 << (logm - 1));
+    int index = (index_raw * galois_elts[logm - 1]) % (m << 1);
+
+    for (uint32_t a = 0; a < temp.size(); a++) {
+        if (a >= (m - (1 << (logm - 1)))) { // corner case.
+            evaluator.multiply_plain(temp[a], two, newtemp[a]); // plain multiplication by 2.
+        } else {
+            evaluator.apply_galois(temp[a], galois_elts[logm - 1], galkey, tempctxt_rotated);
+            evaluator.add(temp[a], tempctxt_rotated, newtemp[a]);
+            multiply_power_of_X(enc_param, temp[a], tempctxt_shifted, index_raw);
+            multiply_power_of_X(enc_param, tempctxt_rotated, tempctxt_rotatedshifted, index);
+            evaluator.add(tempctxt_shifted, tempctxt_rotatedshifted, newtemp[a + temp.size()]);
+        }
+    }
+
+    vector<Ciphertext>::const_iterator first = newtemp.begin();
+    vector<Ciphertext>::const_iterator last = newtemp.begin() + stepSize;
+    vector<Ciphertext> newVec(first, last);
+
+    return newVec;
+}
+
+
 
 // for a tree with m leaf node, m >> stepSize, we first expand it to a subtree with m / stepSize leaf node
 // (i.e., this subtree is the top of the whole tree)
 // and then for each leaf node in this subtree, expand it into a small subtree with stepSize leaf node
-inline vector<Ciphertext> expand(const SEALContext& context, EncryptionParameters& enc_param,
-				 const SecretKey& sk, const Ciphertext &encrypted, uint32_t m,
+inline vector<Ciphertext> expand_standalone(const SEALContext& context, EncryptionParameters& enc_param,
+				                 const SecretKey& sk, const Ciphertext &encrypted, uint32_t m,
                                  const GaloisKeys& galkey, int t = 65537) {
 
     Evaluator evaluator(context);
