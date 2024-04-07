@@ -16,21 +16,22 @@ using namespace std;
 
 int main() {
   
-    int ring_dim = 8192; // for 200 people, can encrypt ring_dim / 200 Z_p element
+    int ring_dim = 16384; // for 200 people, can encrypt ring_dim / 200 Z_p element
     int n = 512;
     int p = 65537;
 
-	int numcores = 1;
+	int numcores = 8;
 
-    int group_size = 256;
-    int batch_size = ring_dim / group_size;
+    int group_size = 2048;
+    int batch_size = ring_dim / group_size < numcores ? ring_dim / group_size : numcores;
     // int batch_size = ring_dim / group_size;
 
     EncryptionParameters bfv_params(scheme_type::bfv);
     bfv_params.set_poly_modulus_degree(ring_dim);
-    auto coeff_modulus = CoeffModulus::Create(ring_dim, { 30, 60, 60, 60,  
+    auto coeff_modulus = CoeffModulus::Create(ring_dim, { 
+                                                          30, 60, 60, 60,  
                                                           60, 60, 60, 60
-                                                          });
+                                                        });
     bfv_params.set_coeff_modulus(coeff_modulus);
     bfv_params.set_plain_modulus(p);
 
@@ -139,9 +140,6 @@ int main() {
 		tokens[i].parms_id() = parms_id_zero;
 		for (int j = 0; j < (int) ring_dim; j++) {
 			tokens[i].data()[j] = random_uint64() % 65537;
-			// if (i == 2) {
-			//   cout << tokens[i].data()[j] << " ";
-			// }
 		}
     }
     cout << "After generation" << endl;
@@ -163,16 +161,18 @@ int main() {
 	vector<Ciphertext>::const_iterator b = perms.begin();
     for (int i = first; i < last; i++) {
 		vector<Ciphertext> perms_share(b + i*batch_perm_size , b + (i+1)*batch_perm_size);
-    	perm_share_final[i] = EvalMultMany_inpace_modImprove(perms, relin_keys, seal_context, bfv_secret_key);
+    	perm_share_final[i] = EvalMultMany_inpace_modImprove(perms_share, relin_keys, seal_context, bfv_secret_key);
     }
 	NTL_EXEC_RANGE_END;
 	Ciphertext final_perm_vec = EvalMultMany_inpace_modImprove(perm_share_final, relin_keys, seal_context, bfv_secret_key);
 
 	time_end = chrono::high_resolution_clock::now();
-	cout << "** [TIME] ** EvalMultMany_inpace_modImprove: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+	cout << "** [TIME] ** EvalMultMany_inpace_modImprove: " << \
+        chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 	
-	cout << "--[NOISE]-- after multiply to single perm vector: " << decryptor.invariant_noise_budget(perm_share_final[0]) << endl;
+	cout << "--[NOISE]-- after multiply to single perm vector: " << \
+        decryptor.invariant_noise_budget(perm_share_final[0]) << endl;
 
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -181,27 +181,30 @@ int main() {
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 	time_start = chrono::high_resolution_clock::now();
-    vector<Ciphertext> expanded_subtree_roots = subExpand(bfv_secret_key, seal_context, bfv_params, final_perm_vec,
-                                                          ring_dim, gal_keys_expand, numcores);
+    vector<Ciphertext> expanded_subtree_roots_first = subExpand(bfv_secret_key, seal_context, bfv_params,
+                                                                final_perm_vec, ring_dim, gal_keys_expand,
+                                                                batch_size);
+    time_end = chrono::high_resolution_clock::now();
+    cout << "** [TIME] ** First level subExpand time: " << \
+        chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 
-    print_ct_to_pl(expanded_subtree_roots[0], seal_context, bfv_secret_key, ring_dim);
-    
+    time_start = chrono::high_resolution_clock::now();
+    vector<Ciphertext> expanded_subtree_roots_second = subExpand(bfv_secret_key, seal_context, bfv_params,
+                                                                 expanded_subtree_roots_first[0], ring_dim,
+                                                                 gal_keys_expand, numcores); 
+
     // oblivious expand the result into ring_dim ciphertexts, each encode the 0 or token value as the constant
-
-    vector<vector<Ciphertext>> expanded(numcores, vector<Ciphertext>(ring_dim/numcores));
+    vector<vector<Ciphertext>> expanded_leaf(numcores, vector<Ciphertext>(group_size/numcores));
 
     NTL_EXEC_RANGE(numcores, first, last);
     for (int i = first; i < last; i++) {
-        expanded[i] = expand(seal_context, bfv_params, expanded_subtree_roots[i], ring_dim, gal_keys_expand,
-                             ring_dim/numcores);
+        expanded_leaf[i] = expand(seal_context, bfv_params, expanded_subtree_roots_second[i], ring_dim,
+                                  gal_keys_expand, ring_dim/numcores/batch_size);
     }
     NTL_EXEC_RANGE_END;
-
-    // print_ct_to_pl(expanded[0][0], seal_context, bfv_secret_key, ring_dim);
-
-
 	time_end = chrono::high_resolution_clock::now();
-	cout << "** [TIME] ** expand: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+	cout << "** [TIME] ** Second + Leaf level expand time: " << \
+        chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
 	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -217,14 +220,14 @@ int main() {
     // cout << "--[NOISE]-- initial result noise: " << decryptor.invariant_noise_budget(result) << endl;
 
     NTL_EXEC_RANGE(numcores, first, last);
-    int batch_share = ring_dim/numcores;
+    int batch_share = group_size/numcores;
     for (int t = first; t < last; t++) {
         for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
             if (i % batch_share == 0) { // skip the first one, done outside the loop already
-                evaluator.multiply_plain(expanded[t][0], tokens[i], result_tmp[t]);
+                evaluator.multiply_plain(expanded_leaf[t][0], tokens[i], result_tmp[t]);
             } else {
                 Ciphertext tmp;
-                evaluator.multiply_plain(expanded[t][i % batch_share], tokens[i], tmp);
+                evaluator.multiply_plain(expanded_leaf[t][i % batch_share], tokens[i], tmp);
                 evaluator.add_inplace(result_tmp[t], tmp);
             }
         }
