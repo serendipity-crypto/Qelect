@@ -20,7 +20,7 @@ int main() {
     int n = 512;
     int p = 65537;
 
-	int numcores = 8;
+  int numcores = 8;
 
     int group_size = 4096;
     // int batch_size = ring_dim / group_size < numcores ? ring_dim / group_size : numcores;
@@ -107,9 +107,9 @@ int main() {
 
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     
     // prepare 256 permutation vectors, representing the first row of a permutation matrix
@@ -119,15 +119,15 @@ int main() {
     pp.resize(ring_dim);
     pp.parms_id() = parms_id_zero;
     for (int i = 0; i < (int) perms.size(); i++) {
-		for (int j = 0; j < (int) ring_dim; j++) {
-			pp.data()[j] = 0;
-		}
-		if (i == 0) {
-			pp.data()[2] = 1; // [0, 0, 1, 0,...]
-		} else {
-			pp.data()[0] = 1; // [1,0,0,0], notice that following ciphertext no need to repeat
-		}
-		encryptor.encrypt(pp, perms[i]);
+    for (int j = 0; j < (int) ring_dim; j++) {
+      pp.data()[j] = 0;
+    }
+    if (i == 0) {
+      pp.data()[2] = 1; // [0, 0, 1, 0,...]
+    } else {
+      pp.data()[0] = 1; // [1,0,0,0], notice that following ciphertext no need to repeat
+    }
+    encryptor.encrypt(pp, perms[i]);
     }
 
     cout << "--[NOISE]-- initial: " << decryptor.invariant_noise_budget(perms[0]) << endl;
@@ -137,53 +137,53 @@ int main() {
     // prepare ring_dim different tokens, each is of size ring_dim, in plaintext form
     vector<Plaintext> tokens(ring_dim); 
     for (int i = 0; i < (int) tokens.size(); i++) {
-		tokens[i].resize(ring_dim);
-		tokens[i].parms_id() = parms_id_zero;
-		for (int j = 0; j < (int) ring_dim; j++) {
-			tokens[i].data()[j] = random_uint64() % 65537;
-		}
+    tokens[i].resize(ring_dim);
+    tokens[i].parms_id() = parms_id_zero;
+    for (int j = 0; j < (int) ring_dim; j++) {
+      tokens[i].data()[j] = random_uint64() % 65537;
+    }
     }
     cout << "After generation" << endl;
 
     chrono::high_resolution_clock::time_point time_start, time_end;
-	uint64_t total_time = 0;
+  uint64_t total_time = 0;
     time_start = chrono::high_resolution_clock::now();
 
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // multiply all perm vec ciphertexts, log(n) depth of ct-multi
 
     NTL::SetNumThreads(numcores);
-	vector<Ciphertext> perm_share_final(numcores);
-	uint64_t batch_perm_size = perms.size() / numcores;
+  vector<Ciphertext> perm_share_final(numcores);
+  uint64_t batch_perm_size = perms.size() / numcores;
     NTL_EXEC_RANGE(numcores, first, last);
-	vector<Ciphertext>::const_iterator b = perms.begin();
+  vector<Ciphertext>::const_iterator b = perms.begin();
     for (int i = first; i < last; i++) {
-		vector<Ciphertext> perms_share(b + i*batch_perm_size , b + (i+1)*batch_perm_size);
-    	perm_share_final[i] = EvalMultMany_inpace_modImprove(perms_share, relin_keys, seal_context, bfv_secret_key);
+    vector<Ciphertext> perms_share(b + i*batch_perm_size , b + (i+1)*batch_perm_size);
+      perm_share_final[i] = EvalMultMany_inpace_modImprove(perms_share, relin_keys, seal_context, bfv_secret_key);
     }
-	NTL_EXEC_RANGE_END;
-	Ciphertext final_perm_vec = EvalMultMany_inpace_modImprove(perm_share_final, relin_keys, seal_context, bfv_secret_key);
+  NTL_EXEC_RANGE_END;
+  Ciphertext final_perm_vec = EvalMultMany_inpace_modImprove(perm_share_final, relin_keys, seal_context, bfv_secret_key);
 
-	time_end = chrono::high_resolution_clock::now();
-	cout << "** [TIME] ** EvalMultMany_inpace_modImprove: " << \
+  time_end = chrono::high_resolution_clock::now();
+  cout << "** [TIME] ** EvalMultMany_inpace_modImprove: " << \
         chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-	total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
-	
-	cout << "--[NOISE]-- after multiply to single perm vector: " << \
+  total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+  
+  cout << "--[NOISE]-- after multiply to single perm vector: " << \
         decryptor.invariant_noise_budget(perm_share_final[0]) << endl;
 
     perms.clear();
 
 
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	time_start = chrono::high_resolution_clock::now();
+  time_start = chrono::high_resolution_clock::now();
     // this can be done more efficiently, by using the binary representation of randomness to expand a single path
     // extract 256 subroots
     vector<Ciphertext> expanded_subtree_roots_first = subExpand(bfv_secret_key, seal_context, bfv_params,
@@ -209,21 +209,21 @@ int main() {
                                   gal_keys_expand, ring_dim/batch_size/numcores);
     }
     NTL_EXEC_RANGE_END;
-	time_end = chrono::high_resolution_clock::now();
-	cout << "** [TIME] ** Second + Leaf level expand time: " << \
+  time_end = chrono::high_resolution_clock::now();
+  cout << "** [TIME] ** Second + Leaf level expand time: " << \
         chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-	total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+  total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
     // multiply the plaintext token together with the expanded 0/1 plaintext vector
-	time_start = chrono::high_resolution_clock::now();
+  time_start = chrono::high_resolution_clock::now();
     int sq_group_size = sqrt(group_size);
-    vector<vector<Ciphertext>> result_tmp(numcores,vector<Ciphertext>(sq_group_size/numcores));
-    vector<vector<Ciphertext>> result_tmp_final(numcores,vector<Ciphertext>(sq_group_size/numcores));
+    vector<vector<Ciphertext>> result_tmp(numcores, vector<Ciphertext>(sq_group_size));
+    vector<Ciphertext> result_tmp_final(numcores);
 
     // cout << "--[NOISE]-- expanded noise: " << decryptor.invariant_noise_budget(expanded[0][0]) << endl;
     // cout << "--[NOISE]-- initial result noise: " << decryptor.invariant_noise_budget(result) << endl;
@@ -235,61 +235,63 @@ int main() {
         }
     }
 
-    NTL_EXEC_RANGE(numcores, first, last);
     int batch_share = sq_group_size/numcores;
+    NTL_EXEC_RANGE(numcores, first, last);
     for (int t = first; t < last; t++) {
         for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
-            for (int j = 0; j < sq_group_size; j++) {
+            for (int j = 0; j < sq_group_size; j++) { // iterate through all batches
                 if (i % batch_share == 0) { // skip the first one, done outside the loop already
-                    evaluator.multiply_plain(expanded_leaf[t][0], tokens[i*sq_group_size + j], result_tmp[t][i]);
+                    evaluator.multiply_plain(expanded_leaf[t][0], tokens[j*sq_group_size + i], result_tmp[t][j]);
                 } else {
                     Ciphertext tmp;
-                    evaluator.multiply_plain(expanded_leaf[t][i % batch_share], tokens[i*sq_group_size + j], tmp);
-                    evaluator.add_inplace(result_tmp[t][i], tmp);
+                    evaluator.multiply_plain(expanded_leaf[t][i % batch_share], tokens[j*sq_group_size + i], tmp);
+                    evaluator.add_inplace(result_tmp[t][j], tmp);
                 }
             }
-        }
-    }
-    for (int t = first; t < last; t++) {
-        for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
-            for (int j = 0; j < batch_share; j++) {
-                if (i % batch_share == 0) { // skip the first one, done outside the loop already
-                    evaluator.multiply(expanded_leaf_copy[t][0], result_tmp[t][j], result_tmp_final[t][i]);
-                } else {
-                    Ciphertext tmp;
-                    evaluator.multiply(expanded_leaf_copy[t][i % batch_share], result_tmp[t][j], tmp);
-                    evaluator.add_inplace(result_tmp_final[t][i], tmp);
-                }
-            }
-        }
-    }
-
-    for (int t = first; t < last; t++) {
-        for (int i = 0; i < (int) result_tmp_final[0].size(); i++) {
-            evaluator.add_inplace(result_tmp_final[t][0], result_tmp_final[t][i]);
         }
     }
     NTL_EXEC_RANGE_END;
 
-    // cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result_tmp[0]) << endl;
-
-    for (int i = 1; i < (int) result_tmp_final.size(); i++) {
-        evaluator.add_inplace(result_tmp_final[0][0], result_tmp_final[i][0]);
+    // sum over all cores, to make a sq_group_size ciphertext array
+    for (int b = 0; b < sq_group_size; b++) {
+        for (int i = 0; i < numcores; i++) {
+            evaluator.add_inplace(result_tmp[0][b], result_tmp[i][b]);
+        }
     }
+
+    NTL_EXEC_RANGE(numcores, first, last);
+    for (int t = first; t < last; t++) {
+        for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
+            if (i % batch_share == 0) { // skip the first one, done outside the loop already
+                evaluator.multiply(expanded_leaf_copy[t][0], result_tmp[0][i], result_tmp_final[t]);
+            } else {
+                Ciphertext tmp;
+                evaluator.multiply(expanded_leaf_copy[t][i % batch_share], result_tmp[0][i], tmp);
+                evaluator.add_inplace(result_tmp_final[t], tmp);
+            }
+        }
+    }
+    NTL_EXEC_RANGE_END;
+
+
+    for (int t = 0; t < numcores; t++) {
+        evaluator.add_inplace(result_tmp_final[0], result_tmp_final[t]);
+    }
+
     
     time_end = chrono::high_resolution_clock::now();
-	cout << "** [TIME] ** multiply with pk: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+  cout << "** [TIME] ** multiply with pk: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
-	cout << "****** TOTAL time: " << total_time << endl;
+  cout << "****** TOTAL time: " << total_time << endl;
 
 
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-	////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
-    cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result_tmp_final[0][0]) << endl;
+    cout << "--[NOISE]-- final noise: " << decryptor.invariant_noise_budget(result_tmp_final[0]) << endl;
     // print_ct_to_pl(result, seal_context, bfv_secret_key, ring_dim);
 
     return 0;
