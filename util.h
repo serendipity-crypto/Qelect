@@ -1,4 +1,6 @@
-
+#include <NTL/BasicThreadPool.h>
+#include <NTL/ZZ.h>
+#include <thread>
 #include "seal/util/polyarithsmallmod.h"
 #include "seal/seal.h"
 
@@ -30,6 +32,142 @@ void print_ct_to_vec(Ciphertext& ct, SEALContext& context, SecretKey& sk, uint64
 }
 
 
+Ciphertext extract_and_multiply_multi_core(const RelinKeys &relin_keys, const SEALContext& context,
+                                     Ciphertext& ct1, Ciphertext& ct2, const int group_size = 4096,
+				     const int ring_dim = 32768, const int numcores = 8) {
+    Evaluator evaluator(context);
+    NTL::SetNumThreads(numcores);
+
+    int sq_group_size = sqrt(group_size); // extract each sq_group_size
+
+    // vector<Ciphertext> add_tmp(sq_group_size);
+    Ciphertext final;
+    Plaintext pl;
+    pl.resize(ring_dim);
+    pl.parms_id() = parms_id_zero;
+    for (int j = 0; j < (int) ring_dim; j++) { 
+        if (j < sq_group_size) {
+            pl.data()[j] = 1;
+        } else {
+            pl.data()[j] = 0;
+        }
+    }
+    Ciphertext tmp1, tmp2;
+    evaluator.multiply_plain(ct1, pl, tmp1);
+    evaluator.multiply_plain(ct2, pl, tmp2);
+    evaluator.multiply(tmp1, tmp2, final);
+
+
+    int batch_size = sq_group_size / numcores;
+
+    NTL_EXEC_RANGE(numcores, first, last);
+    for (int c = first; c < last; c++) {
+        for (int i = batch_size*c; i < batch_size*(c+1); i++) {
+
+            if (i == 0) continue; // skip the initial setup
+
+            // prepare the extraction plaintext
+            Plaintext pl_core;
+            pl_core.resize(ring_dim);
+            pl_core.parms_id() = parms_id_zero;
+            for (int j = 0; j < (int) ring_dim; j++) { 
+                if (j < sq_group_size*(i+1) && j >= sq_group_size*i) {
+                    pl_core.data()[j] = 1;
+                } else {
+                    pl_core.data()[j] = 0;
+                }
+            }
+
+            Ciphertext tmp1_core, tmp2_core;
+            evaluator.multiply_plain(ct1, pl_core, tmp1_core);
+            evaluator.multiply_plain(ct2, pl_core, tmp2_core);
+
+            Ciphertext tmp;
+            evaluator.multiply(tmp1_core, tmp2_core, tmp);
+            // evaluator.relinearize_inplace(tmp, relin_keys);
+            evaluator.add_inplace(final, tmp);
+        }
+    }
+    NTL_EXEC_RANGE_END;
+
+    evaluator.relinearize_inplace(final, relin_keys);
+    return final;
+}
+
+Ciphertext extract_and_multiply(const RelinKeys &relin_keys, const SEALContext& context, Ciphertext& ct1,
+			  Ciphertext& ct2, const int group_size = 4096, const int ring_dim = 32768) {
+    Evaluator evaluator(context);
+
+    int sq_group_size = sqrt(group_size); // extract each sq_group_size
+
+    Plaintext pl;
+    pl.resize(ring_dim);
+    pl.parms_id() = parms_id_zero;
+    // vector<Ciphertext> add_tmp(sq_group_size);
+    Ciphertext final;
+
+    for (int i = 0; i < sq_group_size; i++) {
+        // prepare the extraction plaintext
+        for (int j = 0; j < (int) ring_dim; i++) { 
+            if (j < sq_group_size*(i+1) && j >= sq_group_size*i) {
+                pl.data()[i] = 1;
+            } else {
+                pl.data()[i] = 0;
+            }
+        }
+
+        Ciphertext tmp1, tmp2;
+        evaluator.multiply_plain(ct1, pl, tmp1);
+        evaluator.multiply_plain(ct2, pl, tmp2);
+
+        if (i == 0){
+            evaluator.multiply(tmp1, tmp2, final);
+            // evaluator.relinearize_inplace(final, relin_keys);
+        } else {
+            Ciphertext tmp;
+            evaluator.multiply(tmp1, tmp2, tmp);
+            // evaluator.relinearize_inplace(tmp, relin_keys);
+            evaluator.add_inplace(final, tmp);
+        } 
+    }
+
+    evaluator.relinearize_inplace(final, relin_keys);
+    return final;
+}
+
+
+inline
+Ciphertext EvalMultMany_inpace_modImprove_extract(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys,
+						  const SEALContext& context, SecretKey& sk) {
+    Evaluator evaluator(context);
+    Decryptor decryptor(context, sk);
+    int counter = 0;
+
+    while(ciphertexts.size() != 1){
+        for(size_t i = 0; i < ciphertexts.size()/2; i++){
+	    ciphertexts[i] = extract_and_multiply(relin_keys, context, ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
+            // evaluator.multiply_inplace(ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
+            // evaluator.relinearize_inplace(ciphertexts[i], relin_keys);
+            if(counter & 1) {
+                evaluator.mod_switch_to_next_inplace(ciphertexts[i]);
+            }
+        }
+        if(ciphertexts.size()%2 == 0)
+            ciphertexts.resize(ciphertexts.size()/2);
+        else{ // if odd, take the last one and mod down to make them compatible                                                                                                                                        
+            ciphertexts[ciphertexts.size()/2] = ciphertexts[ciphertexts.size()-1];
+            if(counter & 1) {
+                evaluator.mod_switch_to_next_inplace(ciphertexts[ciphertexts.size()/2]);
+            }
+            ciphertexts.resize(ciphertexts.size()/2+1);
+        }
+        counter += 1;
+    }
+
+    Ciphertext res = ciphertexts[0];
+    return res;
+}
+
 inline
 Ciphertext EvalMultMany_inpace_modImprove(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys,
 				    const SEALContext& context, SecretKey& sk) {
@@ -58,9 +196,7 @@ Ciphertext EvalMultMany_inpace_modImprove(vector<Ciphertext>& ciphertexts, const
     }
 
     Ciphertext res = ciphertexts[0];
-
     return res;
-
 }
 
 
