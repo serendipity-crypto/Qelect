@@ -9,6 +9,28 @@ using namespace std;
 using namespace seal;
 
 
+void saveCiphertext(Ciphertext& ct, const uint64_t index, const string folder = "perm/") {
+    stringstream ss;
+    ct.save(ss);
+    ofstream datafile;
+    datafile.open ("../data/"+folder+to_string(index)+".txt");
+    datafile << ss.rdbuf();
+    datafile.close();
+}
+
+void loadCiphertext(const SEALContext& context, Ciphertext& ct, const uint64_t index,
+                    const string folder = "perm/") {
+
+    ifstream datafile;
+    datafile.open ("../data/"+folder+to_string(index)+".txt");
+
+    stringstream buf;
+    buf << datafile.rdbuf();
+
+    ct.load(context, buf);
+}
+
+
 void print_ct_to_pl(Ciphertext& ct, SEALContext& context, SecretKey& sk, uint64_t ring_dim = 4) {
   Decryptor decryptor(context, sk);
   Plaintext pp;
@@ -34,7 +56,7 @@ void print_ct_to_vec(Ciphertext& ct, SEALContext& context, SecretKey& sk, uint64
 
 Ciphertext extract_and_multiply_multi_core(const RelinKeys &relin_keys, const SEALContext& context,
                                      Ciphertext& ct1, Ciphertext& ct2, const int group_size = 4096,
-				     const int ring_dim = 32768, const int numcores = 8) {
+                     const int ring_dim = 32768, const int numcores = 8) {
     Evaluator evaluator(context);
     NTL::SetNumThreads(numcores);
 
@@ -56,7 +78,6 @@ Ciphertext extract_and_multiply_multi_core(const RelinKeys &relin_keys, const SE
     evaluator.multiply_plain(ct1, pl, tmp1);
     evaluator.multiply_plain(ct2, pl, tmp2);
     evaluator.multiply(tmp1, tmp2, final);
-
 
     int batch_size = sq_group_size / numcores;
 
@@ -95,31 +116,37 @@ Ciphertext extract_and_multiply_multi_core(const RelinKeys &relin_keys, const SE
 }
 
 Ciphertext extract_and_multiply(const RelinKeys &relin_keys, const SEALContext& context, Ciphertext& ct1,
-			  Ciphertext& ct2, const int group_size = 4096, const int ring_dim = 32768) {
+              Ciphertext& ct2, const int group_size = 4096, const int ring_dim = 32768) {
     Evaluator evaluator(context);
 
     int sq_group_size = sqrt(group_size); // extract each sq_group_size
-
     Plaintext pl;
     pl.resize(ring_dim);
     pl.parms_id() = parms_id_zero;
     // vector<Ciphertext> add_tmp(sq_group_size);
     Ciphertext final;
+    chrono::high_resolution_clock::time_point s1, e1;
 
     for (int i = 0; i < sq_group_size; i++) {
+        // cout << "        --> " << i << endl;
         // prepare the extraction plaintext
-        for (int j = 0; j < (int) ring_dim; i++) { 
-            if (j < sq_group_size*(i+1) && j >= sq_group_size*i) {
-                pl.data()[i] = 1;
+        for (int j = 0; j < (int) ring_dim; j++) { 
+            // cout << "????? " << j << endl;
+            if (j >= sq_group_size*i && j < sq_group_size*(i+1)) {
+                pl.data()[j] = 1;
             } else {
-                pl.data()[i] = 0;
+                pl.data()[j] = 0;
             }
         }
 
         Ciphertext tmp1, tmp2;
+        s1 = chrono::high_resolution_clock::now();
         evaluator.multiply_plain(ct1, pl, tmp1);
         evaluator.multiply_plain(ct2, pl, tmp2);
+        e1 = chrono::high_resolution_clock::now();
+        // cout << "        after multi plain two time: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
 
+        s1 = chrono::high_resolution_clock::now();
         if (i == 0){
             evaluator.multiply(tmp1, tmp2, final);
             // evaluator.relinearize_inplace(final, relin_keys);
@@ -129,6 +156,8 @@ Ciphertext extract_and_multiply(const RelinKeys &relin_keys, const SEALContext& 
             // evaluator.relinearize_inplace(tmp, relin_keys);
             evaluator.add_inplace(final, tmp);
         } 
+        e1 = chrono::high_resolution_clock::now();
+        // cout  << "        after multi...time: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
     }
 
     evaluator.relinearize_inplace(final, relin_keys);
@@ -137,15 +166,59 @@ Ciphertext extract_and_multiply(const RelinKeys &relin_keys, const SEALContext& 
 
 
 inline
+Ciphertext EvalMultMany_inpace_modImprove_extract_load(const int start_index, const RelinKeys &relin_keys,
+                                                       const SEALContext& context, SecretKey& sk, int ct_size) {
+    Evaluator evaluator(context);
+    Decryptor decryptor(context, sk);
+    int counter = 0;
+
+    while (ct_size != 1) {
+        cout << "Level: " << ct_size << endl;
+        for(int i = 0; i < ct_size/2; i++) {
+	        cout << "    " << i << endl;
+            // cout << "   " << start_index+i << ", " << start_index+ct_size/2+i << endl;
+            Ciphertext ct1, ct2;
+            loadCiphertext(context, ct1, start_index+i);
+            loadCiphertext(context, ct2, start_index+ct_size/2+i);
+            ct1 = extract_and_multiply(relin_keys, context, ct1, ct2);
+            // evaluator.multiply_inplace(ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
+            // evaluator.relinearize_inplace(ciphertexts[i], relin_keys);
+            if(counter & 1) {
+                evaluator.mod_switch_to_next_inplace(ct1);
+            }
+            saveCiphertext(ct1, start_index+i);
+        }
+        if (ct_size%2 == 0)
+            ct_size = ct_size/2;
+        else { // if odd, take the last one and mod down to make them compatible                                                                                                                                        
+            // ciphertexts[ct_size/2] = ciphertexts[ct_size-1];
+            Ciphertext tmp;
+            loadCiphertext(context, tmp, start_index+ct_size-1);
+            if(counter & 1) {
+                evaluator.mod_switch_to_next_inplace(tmp);
+            }
+            saveCiphertext(tmp, start_index+ct_size/2);
+            ct_size = ct_size/2+1;
+        }
+        counter += 1;
+    }
+
+    Ciphertext res;
+    loadCiphertext(context, res, start_index);
+    return res;
+}
+
+
+inline
 Ciphertext EvalMultMany_inpace_modImprove_extract(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys,
-						  const SEALContext& context, SecretKey& sk) {
+                                                  const SEALContext& context, SecretKey& sk) {
     Evaluator evaluator(context);
     Decryptor decryptor(context, sk);
     int counter = 0;
 
     while(ciphertexts.size() != 1){
         for(size_t i = 0; i < ciphertexts.size()/2; i++){
-	    ciphertexts[i] = extract_and_multiply(relin_keys, context, ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
+        ciphertexts[i] = extract_and_multiply(relin_keys, context, ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
             // evaluator.multiply_inplace(ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
             // evaluator.relinearize_inplace(ciphertexts[i], relin_keys);
             if(counter & 1) {
@@ -170,7 +243,7 @@ Ciphertext EvalMultMany_inpace_modImprove_extract(vector<Ciphertext>& ciphertext
 
 inline
 Ciphertext EvalMultMany_inpace_modImprove(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys,
-				    const SEALContext& context, SecretKey& sk) {
+                    const SEALContext& context, SecretKey& sk) {
     Evaluator evaluator(context);
     Decryptor decryptor(context, sk);
     int counter = 0;
@@ -407,7 +480,7 @@ inline vector<Ciphertext> expand(const SEALContext& context, EncryptionParameter
 // (i.e., this subtree is the top of the whole tree)
 // and then for each leaf node in this subtree, expand it into a small subtree with stepSize leaf node
 inline vector<Ciphertext> expand_standalone(const SEALContext& context, EncryptionParameters& enc_param,
-				                 const SecretKey& sk, const Ciphertext &encrypted, uint32_t m,
+                                 const SecretKey& sk, const Ciphertext &encrypted, uint32_t m,
                                  const GaloisKeys& galkey, int t = 65537) {
 
     Evaluator evaluator(context);
@@ -456,7 +529,7 @@ inline vector<Ciphertext> expand_standalone(const SEALContext& context, Encrypti
             evaluator.multiply_plain(temp[a], two, newtemp[a]); // plain multiplication by 2.
         } else {
             evaluator.apply_galois(temp[a], galois_elts[logm - 1], galkey, tempctxt_rotated);
-	    
+        
             evaluator.add(temp[a], tempctxt_rotated, newtemp[a]);
             multiply_power_of_X(enc_param, temp[a], tempctxt_shifted, index_raw);
             multiply_power_of_X(enc_param, tempctxt_rotated, tempctxt_rotatedshifted, index);
@@ -470,4 +543,3 @@ inline vector<Ciphertext> expand_standalone(const SEALContext& context, Encrypti
 
     return newVec;
 }
-
