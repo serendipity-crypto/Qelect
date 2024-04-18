@@ -127,6 +127,11 @@ Ciphertext extract_and_multiply(const RelinKeys &relin_keys, const SEALContext& 
     Ciphertext final;
     chrono::high_resolution_clock::time_point s1, e1;
 
+    // s1 = chrono::high_resolution_clock::now();
+    evaluator.transform_to_ntt_inplace(ct1);
+    evaluator.transform_to_ntt_inplace(ct2);
+    // e1 = chrono::high_resolution_clock::now();
+
     for (int i = 0; i < sq_group_size; i++) {
         // cout << "        --> " << i << endl;
         // prepare the extraction plaintext
@@ -145,15 +150,15 @@ Ciphertext extract_and_multiply(const RelinKeys &relin_keys, const SEALContext& 
         evaluator.multiply_plain(ct2, pl, tmp2);
         e1 = chrono::high_resolution_clock::now();
         // cout << "        after multi plain two time: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
+        evaluator.transform_from_ntt_inplace(tmp1);
+        evaluator.transform_from_ntt_inplace(tmp2);
 
         s1 = chrono::high_resolution_clock::now();
         if (i == 0){
             evaluator.multiply(tmp1, tmp2, final);
-            // evaluator.relinearize_inplace(final, relin_keys);
         } else {
             Ciphertext tmp;
             evaluator.multiply(tmp1, tmp2, tmp);
-            // evaluator.relinearize_inplace(tmp, relin_keys);
             evaluator.add_inplace(final, tmp);
         } 
         e1 = chrono::high_resolution_clock::now();
@@ -172,45 +177,99 @@ Ciphertext EvalMultMany_inpace_modImprove_extract_load(const int start_index, co
     Decryptor decryptor(context, sk);
     int counter = 0;
 
+    chrono::high_resolution_clock::time_point s1, e1;
+    uint64_t loading = 0;
     while (ct_size != 1) {
-        cout << "Level: " << ct_size << endl;
+        // cout << "Level: " << ct_size << endl;
         for(int i = 0; i < ct_size/2; i++) {
-	        cout << "    " << i << endl;
             // cout << "   " << start_index+i << ", " << start_index+ct_size/2+i << endl;
             Ciphertext ct1, ct2;
+            s1 = chrono::high_resolution_clock::now();
             loadCiphertext(context, ct1, start_index+i);
             loadCiphertext(context, ct2, start_index+ct_size/2+i);
+            e1 = chrono::high_resolution_clock::now();
+            loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
+            // s1 = chrono::high_resolution_clock::now();
             ct1 = extract_and_multiply(relin_keys, context, ct1, ct2);
+            // e1 = chrono::high_resolution_clock::now();
+            // cout << "---------------------------: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
             // evaluator.multiply_inplace(ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
             // evaluator.relinearize_inplace(ciphertexts[i], relin_keys);
             if(counter & 1) {
                 evaluator.mod_switch_to_next_inplace(ct1);
             }
+            s1 = chrono::high_resolution_clock::now();
             saveCiphertext(ct1, start_index+i);
+            e1 = chrono::high_resolution_clock::now();
+            loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
         }
         if (ct_size%2 == 0)
             ct_size = ct_size/2;
         else { // if odd, take the last one and mod down to make them compatible                                                                                                                                        
             // ciphertexts[ct_size/2] = ciphertexts[ct_size-1];
             Ciphertext tmp;
+            s1 = chrono::high_resolution_clock::now();
             loadCiphertext(context, tmp, start_index+ct_size-1);
+            e1 = chrono::high_resolution_clock::now();
+            loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
             if(counter & 1) {
                 evaluator.mod_switch_to_next_inplace(tmp);
             }
+            s1 = chrono::high_resolution_clock::now();
             saveCiphertext(tmp, start_index+ct_size/2);
+            e1 = chrono::high_resolution_clock::now();
+            loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
             ct_size = ct_size/2+1;
         }
         counter += 1;
     }
 
     Ciphertext res;
+    s1 = chrono::high_resolution_clock::now();
     loadCiphertext(context, res, start_index);
+    e1 = chrono::high_resolution_clock::now();
+    loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
+
+    cout << "loading time: " << loading << endl;
     return res;
 }
 
 
 inline
-Ciphertext EvalMultMany_inpace_modImprove_extract(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys,
+Ciphertext EvalMultMany_inpace_modImprove_extract_iterator(vector<Ciphertext>::iterator ciphertexts_it,
+                                                           const RelinKeys &relin_keys, const SEALContext& context,
+                                                           SecretKey& sk, int ct_size) {
+    Evaluator evaluator(context);
+    Decryptor decryptor(context, sk);
+    int counter = 0;
+
+    while(ct_size != 1){
+        for(int i = 0; i < ct_size/2; i++){
+            *(ciphertexts_it+i) = extract_and_multiply(relin_keys, context, *(ciphertexts_it+1), 
+                                                       *(ciphertexts_it+ct_size/2+i));
+
+            if(counter & 1) {
+                evaluator.mod_switch_to_next_inplace(*(ciphertexts_it+i));
+            }
+        }
+        if(ct_size%2 == 0)
+            ct_size = ct_size/2;
+        else{ // if odd, take the last one and mod down to make them compatible                                                                                                                                        
+            *(ciphertexts_it+ct_size/2) = *(ciphertexts_it+ct_size-1);
+            if(counter & 1) {
+                evaluator.mod_switch_to_next_inplace(*(ciphertexts_it+ct_size/2));
+            }
+            ct_size = ct_size/2+1;
+        }
+        counter += 1;
+    }
+
+    Ciphertext res = *ciphertexts_it;
+    return res;
+}
+
+inline
+Ciphertext EvalMultMany_inpace_modImprove_extract(vector<Ciphertext> ciphertexts, const RelinKeys &relin_keys,
                                                   const SEALContext& context, SecretKey& sk) {
     Evaluator evaluator(context);
     Decryptor decryptor(context, sk);

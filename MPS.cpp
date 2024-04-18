@@ -22,7 +22,7 @@ int main() {
 
     int numcores = 8;
 
-    int group_size = 256;
+    int group_size = 4096;
     // int batch_size = ring_dim / group_size < numcores ? ring_dim / group_size : numcores;
     int batch_size = ring_dim / sqrt(group_size);
     // int batch_size = ring_dim / group_size;
@@ -30,9 +30,9 @@ int main() {
     EncryptionParameters bfv_params(scheme_type::bfv);
     bfv_params.set_poly_modulus_degree(ring_dim);
     auto coeff_modulus = CoeffModulus::Create(ring_dim, { 
-                                                          30, 60, 60, 60, 60,
-                                                          60, 60, 60, 60, 60,
-                                                          60, 60, 60, 60
+                                                          60, 45, 60, 60,
+                                                          60, 60, 60, 60,
+                                                          60, 60, 60
                                                         });
     bfv_params.set_coeff_modulus(coeff_modulus);
     bfv_params.set_plain_modulus(p);
@@ -57,13 +57,6 @@ int main() {
 
     MemoryPoolHandle my_pool = MemoryPoolHandle::New();
 
-    // generate a key switching key based on key_before and secret_key
-    KSwitchKeys ksk;
-    seal::util::ConstPolyIter secret_key_before(bfv_secret_key.data().data(), ring_dim, coeff_modulus.size());
-
-    new_key_keygen.generate_kswitch_keys(secret_key_before, 1, static_cast<KSwitchKeys &>(ksk), false);
-    ksk.parms_id() = seal_context.key_parms_id();
-
     PublicKey bfv_public_key;
     keygen.create_public_key(bfv_public_key);
 
@@ -76,11 +69,26 @@ int main() {
     Decryptor decryptor(seal_context, bfv_secret_key);
 
     GaloisKeys gal_keys_expand;
-    vector<uint32_t> galois_elts;
-    for (int i = 0; i < ceil(log2(ring_dim)); i++) {
-      galois_elts.push_back((ring_dim + exponentiate_uint(2, i)) / exponentiate_uint(2, i));
+
+    vector<Modulus> coeff_modulus_expand = coeff_modulus;
+	coeff_modulus_expand.erase(coeff_modulus_expand.begin() + 2, coeff_modulus_expand.end()-1);
+	EncryptionParameters parms_expand = bfv_params;
+	parms_expand.set_coeff_modulus(coeff_modulus_expand);
+	SEALContext context_expand = SEALContext(parms_expand, true, sec_level_type::none);
+
+	SecretKey sk_expand;
+	sk_expand.data().resize(coeff_modulus_expand.size() * ring_dim);
+	sk_expand.parms_id() = context_expand.key_parms_id();
+	util::set_poly(bfv_secret_key.data().data(), ring_dim, coeff_modulus_expand.size() - 1, sk_expand.data().data());
+	util::set_poly(
+			bfv_secret_key.data().data() + ring_dim * (coeff_modulus.size() - 1), ring_dim, 1,
+			sk_expand.data().data() + ring_dim * (coeff_modulus_expand.size() - 1));
+	KeyGenerator keygen_expand(context_expand, sk_expand);
+	vector<uint32_t> galois_elts;
+	for (int i = 0; i < ceil(log2(ring_dim)); i++) {
+        galois_elts.push_back((ring_dim + exponentiate_uint(2, i)) / exponentiate_uint(2, i));
     }
-    keygen.create_galois_keys(galois_elts, gal_keys_expand);
+	keygen_expand.create_galois_keys(galois_elts, gal_keys_expand);
 
     cout << "Gal key generated.\n";
 
@@ -92,32 +100,43 @@ int main() {
     
     // prepare 256 permutation vectors, representing the first row of a permutation matrix
     Ciphertext perm, perm2;
+    // vector<Ciphertext> perms(group_size);
 
-    Plaintext pp;
-    pp.resize(ring_dim);
-    pp.parms_id() = parms_id_zero;
+
+
+
+
+    // Plaintext pp;
+    // pp.resize(ring_dim);
+    // pp.parms_id() = parms_id_zero;
+    // // chrono::high_resolution_clock::time_point s1, e1;
     // for (int i = 0; i < group_size; i++) {
-        for (int j = 0; j < (int) ring_dim; j++) {
-            pp.data()[j] = 0;
-        }
-        // if (i == 0) {
-            pp.data()[2] = 1; // [0, 0, 1, 0,...]
-        // } else {
-        //     pp.data()[0] = 1; // [1,0,0,0], notice that following ciphertext no need to repeat
-        // }
-        chrono::high_resolution_clock::time_point s1, e1;
+    //     cout << i << endl;
+    //     for (int j = 0; j < (int) ring_dim; j++) {
+    //         pp.data()[j] = 0;
+    //     }
+    //     if (i == 0) {
+    //         pp.data()[2] = 1; // [0, 0, 1, 0,...]
+    //     } else {
+    //         pp.data()[0] = 1; // [1,0,0,0], notice that following ciphertext no need to repeat
+    //     }
         
-        encryptor.encrypt(pp, perm);
-        encryptor.encrypt(pp, perm2);
+    //     // encryptor.encrypt(pp, perms[i]);
+    //     encryptor.encrypt(pp, perm2);
         
-        // if (i == 0) cout << "--[NOISE]-- initial: " << decryptor.invariant_noise_budget(perm) << endl;
-        // saveCiphertext(perm, i);
+    //     // if (i == 0) cout << "--[NOISE]-- initial: " << decryptor.invariant_noise_budget(perm) << endl;
+    //     saveCiphertext(perm2, i);
     // }
 
-    s1 = chrono::high_resolution_clock::now();
-    evaluator.multiply_inplace(perm, perm2);
-    e1 = chrono::high_resolution_clock::now();
-    cout << "time: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
+
+
+
+
+
+    // s1 = chrono::high_resolution_clock::now();
+    // evaluator.multiply_inplace(perm, perm2);
+    // e1 = chrono::high_resolution_clock::now();
+    // cout << "time: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
 
 
     cout << "Permutations generated.\n";
@@ -152,28 +171,47 @@ int main() {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // multiply all perm vec ciphertexts, log(n) depth of ct-multi
 
-    NTL::SetNumThreads(numcores);
-    vector<Ciphertext> perm_share_final(numcores);
-    uint64_t batch_perm_size = group_size / numcores;
-    NTL_EXEC_RANGE(numcores, first, last);
-    // vector<Ciphertext>::const_iterator b = perms.begin();
-    for (int i = first; i < last; i++) {
-      // vector<Ciphertext> perms_share(b + i*batch_perm_size , b + (i+1)*batch_perm_size);
-      // perm_share_final[i] = EvalMultMany_inpace_modImprove_extract(perms_share, relin_keys, seal_context, bfv_secret_key);
 
-      perm_share_final[i] =  EvalMultMany_inpace_modImprove_extract_load(i*batch_perm_size, relin_keys, seal_context,
-                                                                         bfv_secret_key, batch_perm_size);
+
+
+    // NTL::SetNumThreads(numcores);
+    // vector<Ciphertext> perm_share_final(numcores);
+    // uint64_t batch_perm_size = group_size / numcores;
+    // NTL_EXEC_RANGE(numcores, first, last);
+    // // vector<Ciphertext>::iterator b = perms.begin();
+    // for (int i = first; i < last; i++) {
+    // //   vector<Ciphertext> perms_share(b + i*batch_perm_size , b + (i+1)*batch_perm_size);
+    // //   perm_share_final[i] = EvalMultMany_inpace_modImprove_extract_iterator(b + i*batch_perm_size, relin_keys, seal_context,
+    // //                                                                         bfv_secret_key, batch_perm_size);
+
+    //   perm_share_final[i] =  EvalMultMany_inpace_modImprove_extract_load(i*batch_perm_size, relin_keys, seal_context,
+    //                                                                      bfv_secret_key, batch_perm_size);
+    // }
+    // NTL_EXEC_RANGE_END;
+    // Ciphertext final_perm_vec = EvalMultMany_inpace_modImprove_extract(perm_share_final, relin_keys, seal_context, bfv_secret_key);
+
+
+    Ciphertext final_perm_vec;
+    encryptor.encrypt(tokens, final_perm_vec);
+    for (int i = 0; i < 8; i++ ){
+        evaluator.mod_switch_to_next_inplace(final_perm_vec);
     }
-    NTL_EXEC_RANGE_END;
-    Ciphertext final_perm_vec = EvalMultMany_inpace_modImprove_extract(perm_share_final, relin_keys, seal_context, bfv_secret_key);
+
+    cout << final_perm_vec.coeff_modulus_size() << " " << decryptor.invariant_noise_budget(final_perm_vec) << endl;
+
+    // evaluator.multiply_plain_inplace(final_perm_vec, tokens);
+    // evaluator.multiply_inplace(final_perm_vec, final_perm_vec);
+    // cout << decryptor.invariant_noise_budget(final_perm_vec) << endl;
+
+
 
     time_end = chrono::high_resolution_clock::now();
     cout << "** [TIME] ** EvalMultMany_inpace_modImprove: " << \
           chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
     
-    cout << "--[NOISE]-- after multiply to single perm vector: " << \
-          decryptor.invariant_noise_budget(perm_share_final[0]) << endl;
+    // cout << "--[NOISE]-- after multiply to single perm vector: " << 
+    //       decryptor.invariant_noise_budget(perm_share_final[0]) << endl;
 
     // perms.clear();
 
@@ -186,7 +224,7 @@ int main() {
     time_start = chrono::high_resolution_clock::now();
     // this can be done more efficiently, by using the binary representation of randomness to expand a single path
     // extract 256 subroots
-    vector<Ciphertext> expanded_subtree_roots_first = subExpand(bfv_secret_key, seal_context, bfv_params,
+    vector<Ciphertext> expanded_subtree_roots_first = subExpand(sk_expand, context_expand, parms_expand,
                                                                 final_perm_vec, ring_dim, gal_keys_expand,
                                                                 batch_size);
     time_end = chrono::high_resolution_clock::now();
@@ -195,7 +233,7 @@ int main() {
 
     time_start = chrono::high_resolution_clock::now();
     // select one of the 256 subroots, expand it to 8 subroots
-    vector<Ciphertext> expanded_subtree_roots_second = subExpand(bfv_secret_key, seal_context, bfv_params,
+    vector<Ciphertext> expanded_subtree_roots_second = subExpand(sk_expand, context_expand, parms_expand,
                                                                  expanded_subtree_roots_first[0], ring_dim,
                                                                  gal_keys_expand, numcores); 
 
@@ -205,7 +243,7 @@ int main() {
     NTL_EXEC_RANGE(numcores, first, last);
     for (int i = first; i < last; i++) {
         // expand each 1 out of the 8 subroots to leaf level
-        expanded_leaf[i] = expand(seal_context, bfv_params, expanded_subtree_roots_second[i], ring_dim,
+        expanded_leaf[i] = expand(context_expand, parms_expand, expanded_subtree_roots_second[i], ring_dim,
                                   gal_keys_expand, ring_dim/batch_size/numcores);
     }
     NTL_EXEC_RANGE_END;
@@ -225,15 +263,20 @@ int main() {
     vector<vector<Ciphertext>> result_tmp(numcores, vector<Ciphertext>(sq_group_size));
     vector<Ciphertext> result_tmp_final(numcores);
 
-    // cout << "--[NOISE]-- expanded noise: " << decryptor.invariant_noise_budget(expanded[0][0]) << endl;
+    cout << "--[NOISE]-- expanded noise: " << decryptor.invariant_noise_budget(expanded_leaf[0][0]) << endl;
     // cout << "--[NOISE]-- initial result noise: " << decryptor.invariant_noise_budget(result) << endl;
 
     vector<vector<Ciphertext>> expanded_leaf_copy(numcores, vector<Ciphertext>(ring_dim/batch_size/numcores));
     for (int i = 0; i < (int) expanded_leaf_copy.size(); i++) {
         for (int j = 0; j < (int) expanded_leaf_copy[0].size(); j++) {
+            // evaluator.mod_switch_to_next_inplace(expanded_leaf[i][j]);
             expanded_leaf_copy[i][j] = expanded_leaf[i][j];
+            evaluator.mod_switch_to_next_inplace(expanded_leaf_copy[i][j]);
+            evaluator.transform_to_ntt_inplace(expanded_leaf[i][j]);
         }
     }
+
+    // cout << decryptor.invariant_noise_budget(expanded_leaf[0][0]) << endl;
 
     int batch_share = sq_group_size/numcores;
     NTL_EXEC_RANGE(numcores, first, last);
@@ -261,6 +304,11 @@ int main() {
         }
     }
 
+    for (int b = 0; b < sq_group_size; b++) {
+        evaluator.transform_from_ntt_inplace(result_tmp[0][b]);
+        evaluator.mod_switch_to_next_inplace(result_tmp[0][b]);
+    }
+
     NTL_EXEC_RANGE(numcores, first, last);
     for (int t = first; t < last; t++) {
         for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
@@ -279,7 +327,7 @@ int main() {
     for (int t = 0; t < numcores; t++) {
         evaluator.add_inplace(result_tmp_final[0], result_tmp_final[t]);
     }
-
+    evaluator.relinearize_inplace(result_tmp_final[0], relin_keys);
     
     time_end = chrono::high_resolution_clock::now();
     cout << "** [TIME] ** multiply with pk: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
