@@ -28,9 +28,9 @@ vector<vector<uint64_t>> expand_ring_vector(vector<uint64_t>& a, int n, int q) {
     return res;
 }
 
-vector<uint64_t>& ring_multiply(vector<uint64_t>& a, vector<uint64_t>& b, int q, bool print = false) {
-    int n = a.size();
-    vector<uint64_t>& res(n);
+vector<uint64_t> ring_multiply(vector<uint64_t>& a, vector<uint64_t>& b, int q, bool print = false) {
+    int n = (int) a.size();
+    vector<uint64_t> res(n);
 
     vector<vector<uint64_t>> expanded_A = expand_ring_vector(a, n, q);
     for (int i = 0; i < n; i++) {
@@ -216,6 +216,58 @@ Ciphertext extract_and_multiply(const RelinKeys &relin_keys, const SEALContext& 
 
 
 inline
+Ciphertext EvalAddMany_inpace_modImprove_extract_load(const int start_index, const SEALContext& context,
+                                                      SecretKey& sk, int ct_size) {
+    Evaluator evaluator(context);
+    Decryptor decryptor(context, sk);
+    int counter = 0;
+
+    chrono::high_resolution_clock::time_point s1, e1;
+    uint64_t loading = 0;
+    while (ct_size != 1) {
+        for(int i = 0; i < ct_size/2; i++) {
+            Ciphertext ct1, ct2;
+            s1 = chrono::high_resolution_clock::now();
+            loadCiphertext(context, ct1, start_index+i);
+            loadCiphertext(context, ct2, start_index+ct_size/2+i);
+            e1 = chrono::high_resolution_clock::now();
+            loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
+            evaluator.add_inplace(ct1, ct2);
+            s1 = chrono::high_resolution_clock::now();
+            saveCiphertext(ct1, start_index+i);
+            e1 = chrono::high_resolution_clock::now();
+            loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
+        }
+        if (ct_size%2 == 0)
+            ct_size = ct_size/2;
+        else { // if odd, take the last one and mod down to make them compatible                                                                                                                                        
+            // ciphertexts[ct_size/2] = ciphertexts[ct_size-1];
+            Ciphertext tmp;
+            s1 = chrono::high_resolution_clock::now();
+            loadCiphertext(context, tmp, start_index+ct_size-1);
+            e1 = chrono::high_resolution_clock::now();
+            loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
+            s1 = chrono::high_resolution_clock::now();
+            saveCiphertext(tmp, start_index+ct_size/2);
+            e1 = chrono::high_resolution_clock::now();
+            loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
+            ct_size = ct_size/2+1;
+        }
+        counter++;
+    }
+
+    Ciphertext res;
+    s1 = chrono::high_resolution_clock::now();
+    loadCiphertext(context, res, start_index);
+    e1 = chrono::high_resolution_clock::now();
+    loading += chrono::duration_cast<chrono::microseconds>(e1 - s1).count();
+
+    cout << "loading time: " << loading << endl;
+    return res;
+}
+
+
+inline
 Ciphertext EvalMultMany_inpace_modImprove_extract_load(const int start_index, const RelinKeys &relin_keys,
                                                        const SEALContext& context, SecretKey& sk, int ct_size) {
     Evaluator evaluator(context);
@@ -311,6 +363,31 @@ Ciphertext EvalMultMany_inpace_modImprove_extract_iterator(vector<Ciphertext>::i
     }
 
     Ciphertext res = *ciphertexts_it;
+    return res;
+}
+
+
+inline
+Ciphertext EvalAddMany_inpace_modImprove_extract_multi_core(vector<Ciphertext> ciphertexts, const SEALContext& context,
+                                                            SecretKey& sk) {
+    Evaluator evaluator(context);
+    Decryptor decryptor(context, sk);
+    int counter = 0;
+
+    while(ciphertexts.size() != 1){
+        for(size_t i = 0; i < ciphertexts.size()/2; i++){
+            evaluator.add_inplace(ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
+        }
+        if(ciphertexts.size()%2 == 0)
+            ciphertexts.resize(ciphertexts.size()/2);
+        else{ // if odd, take the last one and mod down to make them compatible                                                                                                                                        
+            ciphertexts[ciphertexts.size()/2] = ciphertexts[ciphertexts.size()-1];
+            ciphertexts.resize(ciphertexts.size()/2+1);
+        }
+        counter += 1;
+    }
+
+    Ciphertext res = ciphertexts[0];
     return res;
 }
 

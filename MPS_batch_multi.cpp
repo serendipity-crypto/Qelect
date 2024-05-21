@@ -18,7 +18,7 @@ Each user generates a BFV ciphertexts, one of them encrypting a valid permutatio
 ring_dim is not big enough), and all others generate rotations.
 When multiplying together, extract each chunk (which are all monomials), multiply, and add them back together.
 This will also guarantee that each chunk will eventually also be just monomials.
-Each leader is selected by oblivious expanding the monomial in each chunk and multiply with the winner token 
+Each leader is selected by oblivious expanding the monomial in each chunk and multiply with the winner token
 (which will be a ciphertext encryting zero generated based on the public key, this also guarantee the unlink-
 ability between public keys and final winner tokens). 
 */
@@ -27,7 +27,7 @@ int main() {
   
     int ring_dim = 32768; // for 200 people, can encrypt ring_dim / 200 Z_p element
     int n = 512;
-    int p = 4096;
+    int p = 65537;
 
     int numcores = 8;
 
