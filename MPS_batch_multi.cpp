@@ -13,12 +13,21 @@
 using namespace seal;
 using namespace std;
 
+/*
+Each user generates a BFV ciphertexts, one of them encrypting a valid permutation matrix (or part of it, if
+ring_dim is not big enough), and all others generate rotations.
+When multiplying together, extract each chunk (which are all monomials), multiply, and add them back together.
+This will also guarantee that each chunk will eventually also be just monomials.
+Each leader is selected by oblivious expanding the monomial in each chunk and multiply with the winner token 
+(which will be a ciphertext encryting zero generated based on the public key, this also guarantee the unlink-
+ability between public keys and final winner tokens). 
+*/
 
 int main() {
   
     int ring_dim = 32768; // for 200 people, can encrypt ring_dim / 200 Z_p element
     int n = 512;
-    int p = 65537;
+    int p = 4096;
 
     int numcores = 8;
 
@@ -37,6 +46,8 @@ int main() {
     bfv_params.set_coeff_modulus(coeff_modulus);
     bfv_params.set_plain_modulus(p);
 
+    cout << "after setting param.\n";
+
     prng_seed_type seed;
     for (auto &i : seed) {
         i = random_uint64();
@@ -45,8 +56,8 @@ int main() {
     bfv_params.set_random_generator(rng);
 
     SEALContext seal_context(bfv_params, true, sec_level_type::none);
-    primitive_root = seal_context.first_context_data()->plain_ntt_tables()->get_root();
-    cout << "primitive root: " << primitive_root << endl;
+    // primitive_root = seal_context.first_context_data()->plain_ntt_tables()->get_root();
+    // cout << "primitive root: " << primitive_root << endl;
 
     KeyGenerator new_key_keygen(seal_context, n);
     SecretKey new_key = new_key_keygen.secret_key();
@@ -106,27 +117,26 @@ int main() {
 
 
 
-    // Plaintext pp;
-    // pp.resize(ring_dim);
-    // pp.parms_id() = parms_id_zero;
-    // // chrono::high_resolution_clock::time_point s1, e1;
-    // for (int i = 0; i < group_size; i++) {
-    //     cout << i << endl;
-    //     for (int j = 0; j < (int) ring_dim; j++) {
-    //         pp.data()[j] = 0;
-    //     }
-    //     if (i == 0) {
-    //         pp.data()[2] = 1; // [0, 0, 1, 0,...]
-    //     } else {
-    //         pp.data()[0] = 1; // [1,0,0,0], notice that following ciphertext no need to repeat
-    //     }
+    Plaintext pp;
+    pp.resize(ring_dim);
+    pp.parms_id() = parms_id_zero;
+    // chrono::high_resolution_clock::time_point s1, e1;
+    for (int i = 0; i < group_size; i++) {
+        for (int j = 0; j < (int) ring_dim; j++) {
+            pp.data()[j] = 0;
+        }
+        if (i == 0) {
+            pp.data()[2] = 1; // [0, 0, 1, 0,...]
+        } else {
+            pp.data()[0] = 1; // [1,0,0,0], notice that following ciphertext no need to repeat
+        }
         
-    //     // encryptor.encrypt(pp, perms[i]);
-    //     encryptor.encrypt(pp, perm2);
+        // encryptor.encrypt(pp, perms[i]);
+        encryptor.encrypt(pp, perm2);
         
-    //     // if (i == 0) cout << "--[NOISE]-- initial: " << decryptor.invariant_noise_budget(perm) << endl;
-    //     saveCiphertext(perm2, i);
-    // }
+        // if (i == 0) cout << "--[NOISE]-- initial: " << decryptor.invariant_noise_budget(perm) << endl;
+        saveCiphertext(perm2, i);
+    }
 
 
 
@@ -172,37 +182,35 @@ int main() {
     // multiply all perm vec ciphertexts, log(n) depth of ct-multi
 
 
+    NTL::SetNumThreads(numcores);
+    vector<Ciphertext> perm_share_final(numcores);
+    uint64_t batch_perm_size = group_size / numcores;
+    NTL_EXEC_RANGE(numcores, first, last);
+    // vector<Ciphertext>::iterator b = perms.begin();
+    for (int i = first; i < last; i++) {
+    //   vector<Ciphertext> perms_share(b + i*batch_perm_size , b + (i+1)*batch_perm_size);
+    //   perm_share_final[i] = EvalMultMany_inpace_modImprove_extract_iterator(b + i*batch_perm_size, relin_keys, seal_context,
+    //                                                                         bfv_secret_key, batch_perm_size);
 
-
-    // NTL::SetNumThreads(numcores);
-    // vector<Ciphertext> perm_share_final(numcores);
-    // uint64_t batch_perm_size = group_size / numcores;
-    // NTL_EXEC_RANGE(numcores, first, last);
-    // // vector<Ciphertext>::iterator b = perms.begin();
-    // for (int i = first; i < last; i++) {
-    // //   vector<Ciphertext> perms_share(b + i*batch_perm_size , b + (i+1)*batch_perm_size);
-    // //   perm_share_final[i] = EvalMultMany_inpace_modImprove_extract_iterator(b + i*batch_perm_size, relin_keys, seal_context,
-    // //                                                                         bfv_secret_key, batch_perm_size);
-
-    //   perm_share_final[i] =  EvalMultMany_inpace_modImprove_extract_load(i*batch_perm_size, relin_keys, seal_context,
-    //                                                                      bfv_secret_key, batch_perm_size);
-    // }
-    // NTL_EXEC_RANGE_END;
-    // Ciphertext final_perm_vec = EvalMultMany_inpace_modImprove_extract(perm_share_final, relin_keys, seal_context, bfv_secret_key);
-
-
-    Ciphertext final_perm_vec;
-    encryptor.encrypt(tokens, final_perm_vec);
-    for (int i = 0; i < 8; i++ ){
-        evaluator.mod_switch_to_next_inplace(final_perm_vec);
+        perm_share_final[i] =  EvalMultMany_inpace_modImprove_extract_load(i*batch_perm_size, relin_keys,
+                                                                           seal_context, bfv_secret_key,
+                                                                           batch_perm_size);
     }
+    NTL_EXEC_RANGE_END;
+    cout << "after first level multi: " << perm_share_final[0].coeff_modulus_size() << endl;
+    Ciphertext final_perm_vec = EvalMultMany_inpace_modImprove_extract_multi_core(perm_share_final, relin_keys,
+                                                                                  seal_context, bfv_secret_key);
+
+    cout << "after first level multi: " << final_perm_vec.coeff_modulus_size() << endl;
+
+
+    // Ciphertext final_perm_vec;
+    // encryptor.encrypt(tokens, final_perm_vec);
+    // for (int i = 0; i < 8; i++ ){
+    //     evaluator.mod_switch_to_next_inplace(final_perm_vec);
+    // }
 
     cout << final_perm_vec.coeff_modulus_size() << " " << decryptor.invariant_noise_budget(final_perm_vec) << endl;
-
-    // evaluator.multiply_plain_inplace(final_perm_vec, tokens);
-    // evaluator.multiply_inplace(final_perm_vec, final_perm_vec);
-    // cout << decryptor.invariant_noise_budget(final_perm_vec) << endl;
-
 
 
     time_end = chrono::high_resolution_clock::now();
