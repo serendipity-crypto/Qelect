@@ -32,3 +32,33 @@
 	// cout << endl;
 	// seal::util::RNSIter new_key_rns(bfv_secret_key.data().data(), ring_dim);
 	// ntt_negacyclic_harvey(new_key_rns, coeff_modulus.size(), seal_context.key_context_data()->small_ntt_tables());
+
+
+
+
+
+
+
+
+
+
+
+    // Plaintext blind_rot_base_p;
+    // blind_rot_base_p.resize(ring_dim);
+    // blind_rot_base_p.parms_id() = parms_id_zero;
+    // for (int j = 0; j < ring_dim; j++) {
+    //     blind_rot_base_p.data()[j] = 0;
+    // }
+    // blind_rot_base_p.data()[ring_dim-1] = p-1; // encode -X^{-1}, notice that X^{2N} = -1
+    // evaluator.multiply_plain_inplace(final_perm_vec, blind_rot_base_p); // place the second element to the constant term
+
+
+
+
+
+
+
+
+
+
+

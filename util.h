@@ -758,3 +758,192 @@ inline vector<Ciphertext> expand_standalone(const SEALContext& context, Encrypti
 
     return newVec;
 }
+
+inline
+long power_seal(long x, long y, long m)
+{
+    if (y == 0)
+        return 1;
+    long p = power_seal(x, y / 2, m) % m;
+    p = (p * p) % m;
+ 
+    return (y % 2 == 0) ? p : (x * p) % m;
+}
+
+inline
+long modInverse_seal(long a, long m)
+{
+    return power_seal(a, m - 2, m);
+}
+
+
+
+vector<vector<int>> generateMatrixU_transpose(int n, const int q = 65537) {
+    vector<vector<int>> U(n,  vector<int>(n));
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n; j++) {
+            if (i == 0) {
+                U[i][j] = (int) power_seal(primitive_root, j, q);
+            } else if (i == n/2) {
+                U[i][j] = (int) modInverse_seal(U[0][j], q);
+            } else {
+                U[i][j] = (int) power_seal(U[i-1][j], primitive_root, q);
+            }
+        }
+    }
+    return U;
+}
+
+
+Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& input_ct, const GaloisKeys& gal_keys,
+                                     const int degree, const uint64_t q = 65537, const uint64_t scalar = 1) {
+
+    int sq_rt = sqrt(degree/2);
+    Evaluator evaluator(context);
+    BatchEncoder batch_encoder(context);
+    
+    vector<Ciphertext> input_sqrt_list(2*sq_rt);
+
+    Ciphertext input_ct_copy(input_ct);
+	evaluator.rotate_columns_inplace(input_ct_copy, gal_keys);
+
+    input_sqrt_list[0] = input_ct;
+	input_sqrt_list[sq_rt] = input_ct_copy;
+
+    for (int c = 1; c < sq_rt; c++) {
+        evaluator.rotate_rows(input_sqrt_list[c-1], sq_rt, gal_keys, input_sqrt_list[c]);
+        evaluator.rotate_rows(input_sqrt_list[c-1+sq_rt], sq_rt, gal_keys, input_sqrt_list[c+sq_rt]);
+    }
+    for (int c = 0; c < sq_rt; c++) {
+        evaluator.transform_to_ntt_inplace(input_sqrt_list[c]);
+        evaluator.transform_to_ntt_inplace(input_sqrt_list[c+sq_rt]);
+    }
+
+    chrono::high_resolution_clock::time_point time_start, time_end;
+    uint64_t total_U = 0;
+
+    time_start = chrono::high_resolution_clock::now();
+    vector<vector<int>> U = generateMatrixU_transpose(degree, q);
+    time_end = chrono::high_resolution_clock::now();
+    total_U += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+    vector<Ciphertext> result(sq_rt);
+    for (int iter = 0; iter < sq_rt; iter++) {
+        for (int j = 0; j < (int) input_sqrt_list.size(); j++) {
+
+            time_start = chrono::high_resolution_clock::now();
+            vector<uint64_t> U_tmp(degree);
+            for (int i = 0; i < degree; i++) {
+                int row_index = (i-iter) % (degree/2) < 0 ? (i-iter) % (degree/2) + degree/2 : (i-iter) % (degree/2);
+                row_index = i < degree/2 ? row_index : row_index + degree/2;
+                int col_index = (i + j*sq_rt) % (degree/2);
+                if (j < (int) input_sqrt_list.size() / 2) { // first half
+                    col_index = i < degree/2 ? col_index : col_index + degree/2;
+                } else {
+                    col_index = i < degree/2 ? col_index + degree/2 : col_index;
+                }
+                U_tmp[i] = ((uint64_t) (U[row_index][col_index] * scalar)) % q;
+            }
+
+            Plaintext U_plain;
+            batch_encoder.encode(U_tmp, U_plain);
+            evaluator.transform_to_ntt_inplace(U_plain, input_sqrt_list[j].parms_id());
+
+            time_end = chrono::high_resolution_clock::now();
+            total_U += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+            if (j == 0) {
+                evaluator.multiply_plain(input_sqrt_list[j], U_plain, result[iter]);
+            } else {
+                Ciphertext temp;
+                evaluator.multiply_plain(input_sqrt_list[j], U_plain, temp);
+                evaluator.add_inplace(result[iter], temp);
+            }
+        }
+    }
+
+    for (int i = 0; i < (int) result.size(); i++) {
+        evaluator.transform_from_ntt_inplace(result[i]);
+    }
+
+    for (int iter = sq_rt-1; iter > 0; iter--) {
+        evaluator.rotate_rows_inplace(result[iter], 1, gal_keys);
+        evaluator.add_inplace(result[iter-1], result[iter]);
+    }
+
+    cout << "** [Time] ** TOTAL process U time: " << total_U << endl;
+
+    return result[0];
+}
+
+
+Ciphertext calculateDegree(const SEALContext& context, const RelinKeys &relin_keys, Ciphertext& input, map<int, bool> modDownIndices, int degree) {
+	Evaluator evaluator(context);
+
+	vector<Ciphertext> output(degree);
+	output[0] = input;
+	vector<int> calculated(degree, 0), numMod(degree, 0);
+	calculated[0] = 1;
+
+	Ciphertext res, base;
+
+	auto toCalculate = degree;
+	int resdeg = 0;
+	int basedeg = 1;
+	base = input;
+	while(toCalculate > 0){
+		if(toCalculate & 1){
+			toCalculate -= 1;
+			resdeg += basedeg;
+			if(calculated[resdeg-1] != 0){
+				res = output[resdeg - 1];
+			} else {
+				if(resdeg == basedeg){
+					res = base; // should've never be used as base should have made calculated[basedeg-1]
+				} else {
+					numMod[resdeg-1] = numMod[basedeg-1];
+
+					evaluator.mod_switch_to_inplace(res, base.parms_id()); // match modulus
+					evaluator.multiply_inplace(res, base);
+					evaluator.relinearize_inplace(res, relin_keys);
+					if(modDownIndices.count(resdeg) && !modDownIndices[resdeg]) {
+						modDownIndices[resdeg] = true;
+						evaluator.mod_switch_to_next_inplace(res);
+						numMod[resdeg-1]+=1;
+					}
+				}
+				output[resdeg-1] = res;
+				calculated[resdeg-1] += 1;
+			}
+		} else {
+			toCalculate /= 2;
+			basedeg *= 2;
+			if(calculated[basedeg-1] != 0){
+				base = output[basedeg - 1];
+			} else {
+				numMod[basedeg-1] = numMod[basedeg/2-1];
+				evaluator.square_inplace(base);
+				evaluator.relinearize_inplace(base, relin_keys);
+				while(modDownIndices.count(basedeg) && !modDownIndices[basedeg]) {
+					modDownIndices[basedeg] = true;
+					evaluator.mod_switch_to_next_inplace(base);
+					numMod[basedeg-1]+=1;
+				}
+				output[basedeg-1] = base;
+				calculated[basedeg-1] += 1;
+			}
+		}
+	}
+
+	return output[output.size()-1];
+}
+
+
+Ciphertext raisePowerToPrime(const SEALContext& context, const RelinKeys &relin_keys, Ciphertext& input, map<int, bool> modDownIndices_1,
+							 map<int, bool> modDownIndices_2, int degree_1, int degree_2, int prime = 65537) {
+
+	Ciphertext tmp = calculateDegree(context, relin_keys, input, modDownIndices_1, degree_1);
+	tmp = calculateDegree(context, relin_keys, tmp, modDownIndices_2, degree_2);
+
+	return tmp;
+}
