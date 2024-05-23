@@ -25,20 +25,21 @@ ability between public keys and final winner tokens).
 
 int main() {
   
-    int group_size = 8;
+    int group_size = 4096;
     
-    int ring_dim = group_size; // for 200 people, can encrypt ring_dim / 200 Z_p element
-    int n = 4;
+    // int ring_dim = group_size; // for 200 people, can encrypt ring_dim / 200 Z_p element
+    int ring_dim = 8192;
+    int n = 512;
     int p = 65537;
 
-    int numcores = 1;
+    int numcores = 8;
 
     EncryptionParameters bfv_params(scheme_type::bfv);
     bfv_params.set_poly_modulus_degree(ring_dim);
     auto coeff_modulus = CoeffModulus::Create(ring_dim, { 
-                                                          60, 45, 60, 60,
+                                                          60, 60, 60, 60, 60,
                                                           60, 60, 60, 60,
-                                                          60, 40, 60, 60
+                                                          60, 35, 60
                                                         //   60, 60, 60, 60
                                                         });
     bfv_params.set_coeff_modulus(coeff_modulus);
@@ -75,7 +76,7 @@ int main() {
     BatchEncoder batch_encoder(seal_context);
     Decryptor decryptor(seal_context, bfv_secret_key);
 
-    GaloisKeys gal_keys, gal_keys_expand, gal_keys_coeff;
+    GaloisKeys gal_keys, gal_keys_expand, gal_keys_coeff, gal_keys_coeff_second;
 
     vector<int> stepsfirst = {1};
     keygen.create_galois_keys(stepsfirst, gal_keys);
@@ -86,7 +87,6 @@ int main() {
 	EncryptionParameters parms_coeff = bfv_params;
 	parms_coeff.set_coeff_modulus(coeff_modulus_coeff);
 	SEALContext context_coeff = SEALContext(parms_coeff, true, sec_level_type::none);
-	Evaluator evaluator_next(context_coeff);
 
 	SecretKey sk_coeff;
 	sk_coeff.data().resize(coeff_modulus_coeff.size() * ring_dim);
@@ -101,6 +101,24 @@ int main() {
 	slotToCoeff_steps_coeff.push_back(sqrt(ring_dim/2));
 	keygen_coeff.create_galois_keys(slotToCoeff_steps_coeff, gal_keys_coeff);
     keygen_coeff.create_relin_keys(relin_keys_raise);
+
+
+    // gal keys for second slotToCoeff before oblivious expansion
+    vector<Modulus> coeff_modulus_coeff_second = coeff_modulus;
+	coeff_modulus_coeff_second.erase(coeff_modulus_coeff_second.begin() + 2, coeff_modulus_coeff_second.end()-1);
+	EncryptionParameters parms_coeff_second = bfv_params;
+	parms_coeff_second.set_coeff_modulus(coeff_modulus_coeff_second);
+	SEALContext context_coeff_second = SEALContext(parms_coeff_second, true, sec_level_type::none);
+
+	SecretKey sk_coeff_second;
+	sk_coeff_second.data().resize(coeff_modulus_coeff_second.size() * ring_dim);
+	sk_coeff_second.parms_id() = context_coeff_second.key_parms_id();
+	util::set_poly(bfv_secret_key.data().data(), ring_dim, coeff_modulus_coeff_second.size() - 1, sk_coeff_second.data().data());
+	util::set_poly(
+			bfv_secret_key.data().data() + ring_dim * (coeff_modulus.size() - 1), ring_dim, 1,
+			sk_coeff_second.data().data() + ring_dim * (coeff_modulus_coeff_second.size() - 1));
+	KeyGenerator keygen_coeff_second(context_coeff_second, sk_coeff_second);
+	keygen_coeff_second.create_galois_keys(slotToCoeff_steps_coeff, gal_keys_coeff_second);
 
 
     // gal keys for oblivious expansion
@@ -147,16 +165,14 @@ int main() {
     // prepare ring_dim different tokens, each is of size ring_dim, in plaintext form
     // for simplicity, use just one token
     Plaintext tokens;
-    tokens.resize(ring_dim);
-    tokens.parms_id() = parms_id_zero;
     for (int j = 0; j < (int) ring_dim; j++) {
-        tokens.data()[j] = random_uint64() % 65537;
+        perm_v[j] = 2;
     }
     cout << "After param generation." << endl;
+    batch_encoder.encode(perm_v, tokens);
 
     chrono::high_resolution_clock::time_point time_start, time_end;
     uint64_t total_time = 0;
-    time_start = chrono::high_resolution_clock::now();
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -164,6 +180,7 @@ int main() {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     // add all perm vec ciphertexts
 
+    time_start = chrono::high_resolution_clock::now();
     NTL::SetNumThreads(numcores);
     vector<Ciphertext> perm_share_final(numcores);
     uint64_t batch_perm_size = group_size / numcores;
@@ -189,6 +206,7 @@ int main() {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    time_start = chrono::high_resolution_clock::now();
     evaluator.rotate_rows_inplace(final_perm_vec, 1, gal_keys); // place the second element to the first
 
     // extract the first element
@@ -204,17 +222,8 @@ int main() {
     evaluator.mod_switch_to_next_inplace(final_perm_vec);
 
     // slot_to_coeff so that the first slot is now serving as the constant term of the poly
-    decryptor.decrypt(final_perm_vec, pp);
-    batch_encoder.decode(pp, perm_v);
-    cout << perm_v << endl;
-
     final_perm_vec = slotToCoeff_WOPrepreocess(context_coeff, final_perm_vec, gal_keys_coeff, ring_dim, p);
 
-    decryptor.decrypt(final_perm_vec, pp);
-    for (int i = 0; i < ring_dim; i++) {
-        cout << pp.data()[i] << " ";
-    }
-    cout << endl;
 
     // compare with base_rot, and "blind rotate" it from "v" as a constant poly to "x^v" as a monomial
     vector<uint64_t> blind_rot_base_v(ring_dim);
@@ -244,72 +253,83 @@ int main() {
 
     cout << "-- [Noise] -- After raise power for oblivious expansion: " << decryptor.invariant_noise_budget(final_perm_vec) << endl;
 
-    decryptor.decrypt(final_perm_vec, pp);
-    batch_encoder.decode(pp, perm_v);
-    cout << perm_v << endl;
+    final_perm_vec = slotToCoeff_WOPrepreocess(context_coeff_second, final_perm_vec, gal_keys_coeff_second, ring_dim, p);
 
-    final_perm_vec = slotToCoeff_WOPrepreocess(context_coeff, final_perm_vec, gal_keys_coeff, ring_dim, p);
+    time_end = chrono::high_resolution_clock::now();
 
-    decryptor.decrypt(final_perm_vec, pp);
-    for (int i = 0; i < ring_dim; i++) {
-        cout << pp.data()[i] << " ";
+    cout << "** [TIME] ** Extract each slot v into X^v: " << \
+        chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+
+    cout << "-- [Noise] -- Before oblivious expansion: " << decryptor.invariant_noise_budget(final_perm_vec) << endl;
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+    // expand to ring_dim binary ciphertexts, and multiply with different token
+    time_start = chrono::high_resolution_clock::now();
+    vector<Ciphertext> expanded_subtree_roots_multi_core = subExpand(sk_expand, context_expand, parms_expand,
+                                                                     final_perm_vec, ring_dim,
+                                                                     gal_keys_expand, numcores); 
+
+    // oblivious expand the result into ring_dim ciphertexts, each encode the 0 or token value as the constant
+    vector<vector<Ciphertext>> expanded_leaf(numcores, vector<Ciphertext>(ring_dim/numcores));
+
+    NTL_EXEC_RANGE(numcores, first, last);
+    for (int i = first; i < last; i++) {
+        // expand each 1 out of the 8 subroots to leaf level
+        expanded_leaf[i] = expand(context_expand, parms_expand, expanded_subtree_roots_multi_core[i], ring_dim,
+                                  gal_keys_expand, ring_dim/numcores);
     }
-    cout << endl;
+    NTL_EXEC_RANGE_END;
+    time_end = chrono::high_resolution_clock::now();
+    cout << "** [TIME] ** Expansion time: " << 
+          chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
 
-    vector<uint64_t> test_v(ring_dim);
-    Plaintext test_p;
-    Ciphertext test_c;
-    for (int i = 0; i < ring_dim; i++) {
-        test_v[i] = 0;
+    // multiply the selection binary ciphertexts with the tokens, and sum them up
+    time_start = chrono::high_resolution_clock::now();
+
+    vector<Ciphertext> result_tmp(numcores);
+
+    for (int i = 0; i < (int) expanded_leaf.size(); i++) {
+        for (int j = 0; j < (int) expanded_leaf[0].size(); j++) {
+            evaluator.mod_switch_to_next_inplace(expanded_leaf[i][j]);
+            evaluator.transform_to_ntt_inplace(expanded_leaf[i][j]);
+        }
     }
-    test_v[1] = 2;
-    batch_encoder.encode(test_v, test_p);
-    encryptor.encrypt(test_p, test_c);
+    evaluator.transform_to_ntt_inplace(tokens, expanded_leaf[0][0].parms_id());
 
-    evaluator.mod_switch_to_next_inplace(test_c);
-
-    decryptor.decrypt(test_c, pp);
-    batch_encoder.decode(pp, perm_v);
-    cout << perm_v << endl;
-
-    test_c = slotToCoeff_WOPrepreocess(context_coeff, test_c, gal_keys_coeff, ring_dim, p);
-
-    decryptor.decrypt(test_c, pp);
-    for (int i = 0; i < ring_dim; i++) {
-        cout << pp.data()[i] << " ";
+    int batch_share = group_size/numcores;
+    NTL_EXEC_RANGE(numcores, first, last);
+    for (int t = first; t < last; t++) {
+        for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
+            if (i % batch_share == 0) {
+                evaluator.multiply_plain(expanded_leaf[t][0], tokens, result_tmp[t]);
+            } else {
+                Ciphertext tmp;
+                evaluator.multiply_plain(expanded_leaf[t][i % batch_share], tokens, tmp);
+                evaluator.add_inplace(result_tmp[t], tmp);
+            }
+        }
     }
-    cout << endl;
+    NTL_EXEC_RANGE_END;
+
+    for (int i = 0; i < numcores; i++) {
+        evaluator.add_inplace(result_tmp[0], result_tmp[i]);
+    }
+
+    evaluator.transform_from_ntt_inplace(result_tmp[0]);
+    time_end = chrono::high_resolution_clock::now();
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
 
+    // decryptor.decrypt(result_tmp[0], pp);
     // batch_encoder.decode(pp, perm_v);
-    // cout << perm_v << endl;
+    // cout << "FINAL WINNING TOKEN: " << perm_v << endl; // !!!!! somehow this is 2N larger than the original winning token...
 
-
-
-    // perm_power = slotToCoeff_WOPrepreocess_time(seal_context, seal_context_next, perm_power,
-    //                                             gal_keys_slotToCoeff, process_u_time[i], 128, ring_dim,
-    //                                             t, inv);
-
-    // vector<Ciphertext> expanded_subtree_roots_multi_core = subExpand(sk_expand, context_expand, parms_expand,
-    //                                                              perm_power, ring_dim,
-    //                                                              gal_keys_expand, numcores); 
-
-    // // oblivious expand the result into ring_dim ciphertexts, each encode the 0 or token value as the constant
-    // vector<vector<Ciphertext>> expanded_leaf(numcores, vector<Ciphertext>(ring_dim/numcores));
-
-    // NTL_EXEC_RANGE(numcores, first, last);
-    // for (int i = first; i < last; i++) {
-    //     // expand each 1 out of the 8 subroots to leaf level
-    //     expanded_leaf[i] = expand(context_expand, parms_expand, expanded_subtree_roots_multi_core[i], ring_dim,
-    //                               gal_keys_expand, ring_dim/numcores);
-    // }
-    // NTL_EXEC_RANGE_END;
-    // time_end = chrono::high_resolution_clock::now();
-    // cout << "** [TIME] ** Second + Leaf level expand time: " << 
-    //       chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-    // total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
-
+    cout << "---- [NOISE] ---- Final noise: " << decryptor.invariant_noise_budget(result_tmp[0]) << endl;
+    cout << "***** [TIME] **** Final total time: " << total_time - U_time - loading_time / numcores << endl;
+    cout << "                      loading time: " << loading_time / numcores << endl;
+    cout << "                    process U time: " << U_time << endl;
 
 
     return 0;
