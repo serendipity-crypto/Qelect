@@ -12,5 +12,8 @@ int primitive_root = 3;
 // equal and below 2^9 -> 65537, 2^12 -> (20bit prime) 786433 = 512*512*3+1, 2^15 -> (23bit prime) 5308417 = (2^8*9)^2+1
 int prime_p = 786433;
 
+int expand_core_share = 8192; // 32GB mem can only tolerate 8192 ciphertexts being generated at the same time
+
 uint64_t loading_time;
 uint64_t U_time;
+uint64_t U_time_multi_core;

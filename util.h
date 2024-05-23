@@ -857,7 +857,7 @@ Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& inp
                 evaluator.transform_to_ntt_inplace(U_plain, input_sqrt_list[j].parms_id());
 
                 time_end = chrono::high_resolution_clock::now();
-                total_U += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+                U_time_multi_core += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
                 if (j == 0) {
                     evaluator.multiply_plain(input_sqrt_list[j], U_plain, result[iter]);

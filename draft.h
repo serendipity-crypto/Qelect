@@ -62,3 +62,47 @@
 
 
 
+
+    // // oblivious expand the result into ring_dim ciphertexts, each encode the 0 or token value as the constant
+    // vector<vector<Ciphertext>> expanded_leaf(numcores, vector<Ciphertext>(ring_dim/numcores));
+
+    // NTL_EXEC_RANGE(numcores, first, last);
+    // for (int i = first; i < last; i++) {
+    //     // expand each 1 out of the 8 subroots to leaf level
+    //     expanded_leaf[i] = expand(context_expand, parms_expand, expanded_subtree_roots_multi_core[i], ring_dim,
+    //                               gal_keys_expand, ring_dim/numcores);
+    // }
+    // NTL_EXEC_RANGE_END;
+    // time_end = chrono::high_resolution_clock::now();
+    // cout << "** [TIME] ** Expansion time: " << 
+    //       chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+    // total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+
+    // // multiply the selection binary ciphertexts with the tokens, and sum them up
+    // time_start = chrono::high_resolution_clock::now();
+
+    // vector<Ciphertext> result_tmp(numcores);
+
+    // for (int i = 0; i < (int) expanded_leaf.size(); i++) {
+    //     for (int j = 0; j < (int) expanded_leaf[0].size(); j++) {
+    //         evaluator.mod_switch_to_next_inplace(expanded_leaf[i][j]);
+    //         evaluator.transform_to_ntt_inplace(expanded_leaf[i][j]);
+    //     }
+    // }
+    // evaluator.transform_to_ntt_inplace(tokens, expanded_leaf[0][0].parms_id());
+
+    // int batch_share = group_size/numcores;
+    // NTL_EXEC_RANGE(numcores, first, last);
+    // for (int t = first; t < last; t++) {
+    //     for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
+    //         if (i % batch_share == 0) {
+    //             evaluator.multiply_plain(expanded_leaf[t][0], tokens, result_tmp[t]);
+    //         } else {
+    //             Ciphertext tmp;
+    //             evaluator.multiply_plain(expanded_leaf[t][i % batch_share], tokens, tmp);
+    //             evaluator.add_inplace(result_tmp[t], tmp);
+    //         }
+    //     }
+    // }
+    // NTL_EXEC_RANGE_END;

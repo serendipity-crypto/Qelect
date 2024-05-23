@@ -28,7 +28,7 @@ int main() {
     int group_size = 4096;
     
     // int ring_dim = group_size; // for 200 people, can encrypt ring_dim / 200 Z_p element
-    int ring_dim = 8192;
+    int ring_dim = 32768;
     int n = 512;
     int p = 65537;
 
@@ -264,54 +264,54 @@ int main() {
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
     // expand to ring_dim binary ciphertexts, and multiply with different token
+    // first prepare numcores 1st-layer-subroots
     time_start = chrono::high_resolution_clock::now();
-    vector<Ciphertext> expanded_subtree_roots_multi_core = subExpand(sk_expand, context_expand, parms_expand,
-                                                                     final_perm_vec, ring_dim,
-                                                                     gal_keys_expand, numcores); 
+    vector<Ciphertext> expanded_multi_core_first = subExpand(sk_expand, context_expand, parms_expand,
+                                                             final_perm_vec, ring_dim, gal_keys_expand, numcores); 
 
-    // oblivious expand the result into ring_dim ciphertexts, each encode the 0 or token value as the constant
-    vector<vector<Ciphertext>> expanded_leaf(numcores, vector<Ciphertext>(ring_dim/numcores));
 
+    // for each 1st-layer-subroot, expand to numcores 2nd-layer-subroots
+    vector<vector<Ciphertext>> expanded_multi_core_second(numcores, vector<Ciphertext>(numcores));
     NTL_EXEC_RANGE(numcores, first, last);
     for (int i = first; i < last; i++) {
-        // expand each 1 out of the 8 subroots to leaf level
-        expanded_leaf[i] = expand(context_expand, parms_expand, expanded_subtree_roots_multi_core[i], ring_dim,
-                                  gal_keys_expand, ring_dim/numcores);
+        expanded_multi_core_second[i] = subExpand(sk_expand, context_expand, parms_expand,
+                                                  expanded_multi_core_first[i], ring_dim, gal_keys_expand,
+                                                  numcores);
     }
     NTL_EXEC_RANGE_END;
-    time_end = chrono::high_resolution_clock::now();
-    cout << "** [TIME] ** Expansion time: " << 
-          chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
-
-    // multiply the selection binary ciphertexts with the tokens, and sum them up
-    time_start = chrono::high_resolution_clock::now();
-
+    vector<vector<Ciphertext>> expanded_leaf(numcores, vector<Ciphertext>(ring_dim/numcores/numcores));
     vector<Ciphertext> result_tmp(numcores);
-
-    for (int i = 0; i < (int) expanded_leaf.size(); i++) {
-        for (int j = 0; j < (int) expanded_leaf[0].size(); j++) {
-            evaluator.mod_switch_to_next_inplace(expanded_leaf[i][j]);
-            evaluator.transform_to_ntt_inplace(expanded_leaf[i][j]);
-        }
-    }
-    evaluator.transform_to_ntt_inplace(tokens, expanded_leaf[0][0].parms_id());
-
-    int batch_share = group_size/numcores;
-    NTL_EXEC_RANGE(numcores, first, last);
-    for (int t = first; t < last; t++) {
-        for (int i = t * batch_share; i < (t+1) * batch_share; i++) {
-            if (i % batch_share == 0) {
-                evaluator.multiply_plain(expanded_leaf[t][0], tokens, result_tmp[t]);
-            } else {
-                Ciphertext tmp;
-                evaluator.multiply_plain(expanded_leaf[t][i % batch_share], tokens, tmp);
-                evaluator.add_inplace(result_tmp[t], tmp);
+    for (int c = 0; c < numcores; c++) {
+        NTL_EXEC_RANGE(numcores, first, last);
+        for (int i = first; i < last; i++) {
+            expanded_leaf[i] = expand(context_expand, parms_expand, expanded_multi_core_second[c][i], ring_dim,
+                                      gal_keys_expand, ring_dim/numcores/numcores);
+            for (int j = 0; j < (int) expanded_leaf[i].size(); j++) {
+                evaluator.mod_switch_to_next_inplace(expanded_leaf[i][j]);
+                evaluator.transform_to_ntt_inplace(expanded_leaf[i][j]);
             }
         }
+        NTL_EXEC_RANGE_END;
+
+        if (c == 0) {
+            evaluator.transform_to_ntt_inplace(tokens, expanded_leaf[0][0].parms_id());
+        }
+
+        NTL_EXEC_RANGE(numcores, first, last);
+        for (int i = first; i < last; i++) {
+            for (int j = 0; j < (int) expanded_leaf[i].size(); j++) {
+                if (j == 0 && c == 0) {
+                    evaluator.multiply_plain(expanded_leaf[i][j], tokens, result_tmp[i]);
+                } else {
+                    Ciphertext tmp;
+                    evaluator.multiply_plain(expanded_leaf[i][j], tokens, tmp);
+                    evaluator.add_inplace(result_tmp[i], tmp);
+                }
+            }
+        }
+        NTL_EXEC_RANGE_END;
     }
-    NTL_EXEC_RANGE_END;
 
     for (int i = 0; i < numcores; i++) {
         evaluator.add_inplace(result_tmp[0], result_tmp[i]);
@@ -319,6 +319,8 @@ int main() {
 
     evaluator.transform_from_ntt_inplace(result_tmp[0]);
     time_end = chrono::high_resolution_clock::now();
+    cout << "** [TIME] ** Obilivious expand and multiply toke: " << \
+        chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
 
@@ -327,9 +329,9 @@ int main() {
     // cout << "FINAL WINNING TOKEN: " << perm_v << endl; // !!!!! somehow this is 2N larger than the original winning token...
 
     cout << "---- [NOISE] ---- Final noise: " << decryptor.invariant_noise_budget(result_tmp[0]) << endl;
-    cout << "***** [TIME] **** Final total time: " << total_time - U_time - loading_time / numcores << endl;
+    cout << "***** [TIME] **** Final total time: " << total_time - U_time - U_time_multi_core / numcores - loading_time / numcores << endl;
     cout << "                      loading time: " << loading_time / numcores << endl;
-    cout << "                    process U time: " << U_time << endl;
+    cout << "                    process U time: " << U_time << ", " << U_time_multi_core << endl;
 
 
     return 0;
