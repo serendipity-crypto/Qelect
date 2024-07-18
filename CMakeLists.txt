@@ -43,6 +43,6 @@ else()
     link_libraries( ${PALISADE_SHARED_LIBRARIES} )
 endif()
 
-add_executable( mps MPS_rgsw.cpp )
+add_executable( mps MLE.cpp )
 
 target_link_libraries(mps SEAL::seal ntl m gmp)

@@ -3,6 +3,7 @@
 #include <thread>
 #include "seal/util/polyarithsmallmod.h"
 #include "seal/seal.h"
+#include "math.h"
 
 using namespace seal::util;
 using namespace std;
@@ -436,8 +437,6 @@ Ciphertext EvalMultMany_inpace_modImprove_extract(vector<Ciphertext> ciphertexts
     while(ciphertexts.size() != 1){
         for(size_t i = 0; i < ciphertexts.size()/2; i++){
             ciphertexts[i] = extract_and_multiply(relin_keys, context, ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
-            // evaluator.multiply_inplace(ciphertexts[i], ciphertexts[ciphertexts.size()/2+i]);
-            // evaluator.relinearize_inplace(ciphertexts[i], relin_keys);
             if(counter & 1) {
                 evaluator.mod_switch_to_next_inplace(ciphertexts[i]);
             }
@@ -460,7 +459,7 @@ Ciphertext EvalMultMany_inpace_modImprove_extract(vector<Ciphertext> ciphertexts
 
 inline
 Ciphertext EvalMultMany_inpace_modImprove(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys,
-                    const SEALContext& context, SecretKey& sk) {
+                                          const SEALContext& context, SecretKey& sk) {
     Evaluator evaluator(context);
     Decryptor decryptor(context, sk);
     int counter = 0;
@@ -761,40 +760,114 @@ inline vector<Ciphertext> expand_standalone(const SEALContext& context, Encrypti
     return newVec;
 }
 
-inline
-long power_seal(long x, long y, long m)
-{
-    if (y == 0)
-        return 1;
-    long p = power_seal(x, y / 2, m) % m;
-    p = (p * p) % m;
- 
-    return (y % 2 == 0) ? p : (x * p) % m;
-}
 
-inline
-long modInverse_seal(long a, long m)
-{
-    return power_seal(a, m - 2, m);
-}
-
-
-
-vector<vector<int>> generateMatrixU_transpose(int n, const int q = 65537) {
-    vector<vector<int>> U(n,  vector<int>(n));
+vector<vector<uint64_t>> generateMatrixU_transpose(int n, const int q = 65537) {
+    vector<vector<uint64_t>> U(n,  vector<uint64_t>(n));
     for (int i = 0; i < n; i++) {
         for (int j = 0; j < n; j++) {
             if (i == 0) {
-                U[i][j] = (int) power_seal(primitive_root, j, q);
+                U[i][j] = (uint64_t) power_seal(primitive_root, j, q);
             } else if (i == n/2) {
-                U[i][j] = (int) modInverse_seal(U[0][j], q);
+                U[i][j] = (uint64_t) modInverse_seal(U[0][j], q);
             } else {
-                U[i][j] = (int) power_seal(U[i-1][j], 3, q);
+                U[i][j] = (uint64_t) power_seal(U[i-1][j], 3, q);
             }
         }
     }
     return U;
 }
+
+
+Ciphertext coeffToSlot_WOPrepreocess(const SEALContext& context, Ciphertext& input_ct, const GaloisKeys& gal_keys,
+                                     const int degree, const uint64_t q = 65537, const uint64_t scalar = 1,
+                                     const int numcores = 8) {
+
+    int sq_rt = sqrt(degree/2);
+    Evaluator evaluator(context);
+    BatchEncoder batch_encoder(context);
+    
+    vector<Ciphertext> input_sqrt_list(2*sq_rt);
+
+    Ciphertext input_ct_copy(input_ct);
+	evaluator.rotate_columns_inplace(input_ct_copy, gal_keys);
+
+    input_sqrt_list[0] = input_ct;
+	input_sqrt_list[sq_rt] = input_ct_copy;
+
+    for (int c = 1; c < sq_rt; c++) {
+        evaluator.rotate_rows(input_sqrt_list[c-1], sq_rt, gal_keys, input_sqrt_list[c]);
+        evaluator.rotate_rows(input_sqrt_list[c-1+sq_rt], sq_rt, gal_keys, input_sqrt_list[c+sq_rt]);
+    }
+    for (int c = 0; c < sq_rt; c++) {
+        evaluator.transform_to_ntt_inplace(input_sqrt_list[c]);
+        evaluator.transform_to_ntt_inplace(input_sqrt_list[c+sq_rt]);
+    }
+
+    chrono::high_resolution_clock::time_point time_start, time_end;
+    uint64_t total_U = 0;
+
+    time_start = chrono::high_resolution_clock::now();
+    vector<vector<uint64_t>> U = generateMatrixU_transpose(degree, q);
+    vector<vector<uint64_t>> U_inverse = generateInverse_vander(U, q);
+    time_end = chrono::high_resolution_clock::now();
+    total_U += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+    vector<Ciphertext> result(sq_rt);
+
+    int core_share = sq_rt / numcores;
+    NTL_EXEC_RANGE(numcores, first, last);
+    for (int c  = first; c < last; c++) {
+        for (int iter = c * core_share; iter < (c+1) * core_share; iter++) {
+            for (int j = 0; j < (int) input_sqrt_list.size(); j++) {
+
+                time_start = chrono::high_resolution_clock::now();
+                vector<uint64_t> U_tmp(degree);
+                for (int i = 0; i < degree; i++) {
+                    int row_index = (i-iter) % (degree/2) < 0 ? (i-iter) % (degree/2) + degree/2 : (i-iter) % (degree/2);
+                    row_index = i < degree/2 ? row_index : row_index + degree/2;
+                    int col_index = (i + j*sq_rt) % (degree/2);
+                    if (j < (int) input_sqrt_list.size() / 2) { // first half
+                        col_index = i < degree/2 ? col_index : col_index + degree/2;
+                    } else {
+                        col_index = i < degree/2 ? col_index + degree/2 : col_index;
+                    }
+                    U_tmp[i] = ((uint64_t) (U_inverse[row_index][col_index] * scalar)) % q;
+                }
+
+                Plaintext U_plain;
+                batch_encoder.encode(U_tmp, U_plain);
+                evaluator.transform_to_ntt_inplace(U_plain, input_sqrt_list[j].parms_id());
+
+                time_end = chrono::high_resolution_clock::now();
+                U_time_multi_core += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+                if (j == 0) {
+                    evaluator.multiply_plain(input_sqrt_list[j], U_plain, result[iter]);
+                } else {
+                    Ciphertext temp;
+                    evaluator.multiply_plain(input_sqrt_list[j], U_plain, temp);
+                    evaluator.add_inplace(result[iter], temp);
+                }
+            }
+        }
+    }
+    NTL_EXEC_RANGE_END;
+
+    for (int i = 0; i < (int) result.size(); i++) {
+        evaluator.transform_from_ntt_inplace(result[i]);
+    }
+
+    for (int iter = sq_rt-1; iter > 0; iter--) {
+        evaluator.rotate_rows_inplace(result[iter], 1, gal_keys);
+        evaluator.add_inplace(result[iter-1], result[iter]);
+    }
+
+    U_time += total_U;
+    // cout << "** [TIME] ** TOTAL process U time: " << total_U << endl;
+
+    return result[0];
+}
+
 
 
 Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& input_ct, const GaloisKeys& gal_keys,
@@ -826,7 +899,7 @@ Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& inp
     uint64_t total_U = 0;
 
     time_start = chrono::high_resolution_clock::now();
-    vector<vector<int>> U = generateMatrixU_transpose(degree, q);
+    vector<vector<uint64_t>> U = generateMatrixU_transpose(degree, q);
     time_end = chrono::high_resolution_clock::now();
     total_U += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
