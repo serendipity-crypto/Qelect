@@ -101,7 +101,7 @@ int main() {
 	vector<int> slotToCoeff_steps_coeff = {0, 1};
 	slotToCoeff_steps_coeff.push_back(sqrt(ring_dim/2));
 	keygen.create_galois_keys(slotToCoeff_steps_coeff, gal_keys_coeff);
-    keygen_coeff.create_relin_keys(relin_keys_raise);
+    keygen.create_relin_keys(relin_keys_raise);
 
 
     // gal keys for second slotToCoeff before oblivious expansion
@@ -161,7 +161,7 @@ int main() {
             }
 
             pp.data()[1] = 1;
-            pp.data()[0] = p - (c+1)*(g+1); // we have {(X-1), (X-2)} for party 1, {(X-2), (X-4)} for party 2
+            pp.data()[0] = p - 2*(c+1)*(g+1); // we have {(X-2), (X-4)} for party 1, {(X-4), (X-8)} for party 2
 
 
             // batch_encoder.encode(perm_v, pp);
@@ -183,7 +183,6 @@ int main() {
     chrono::high_resolution_clock::time_point time_start, time_end;
     uint64_t total_time = 0;
 
-
     // into [committee_size] different degree-one poly
     time_start = chrono::high_resolution_clock::now();
     vector<Ciphertext> random_root_sum(committee_size);
@@ -196,7 +195,6 @@ int main() {
           chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
-
     // into one single poly with [committee_size] different roots
     time_start = chrono::high_resolution_clock::now();
     Ciphertext final_random_root = EvalMultMany_inpace_modImprove(random_root_sum, relin_keys, seal_context, bfv_secret_key);
@@ -208,18 +206,26 @@ int main() {
 
     cout << "-- [Noise] -- After: " << decryptor.invariant_noise_budget(final_random_root) << endl;
 
-    print_ct_to_pl(final_random_root, seal_context, bfv_secret_key, ring_dim);
-
-    // evaluator.mod_switch_to_next_inplace(final_random_root);
-    // evaluator.mod_switch_to_next_inplace(final_random_root);
-
+    // evaluate the poly to extract all roots on indices
     Ciphertext random_poly = coeffToSlot_WOPrepreocess(seal_context, final_random_root, gal_keys_coeff, ring_dim, p, 1, 1);
-    print_ct_to_vec(random_poly, seal_context, bfv_secret_key, ring_dim);
+    Ciphertext binary_vector = evaluatePolynomial(seal_context, random_poly, gal_keys_coeff, ring_dim, 8);
+
+    map<int, bool> raise_mod = {{4, false}, {16, false}, {64, false}, {256, false}};
+    binary_vector = raisePowerToPrime(seal_context, relin_keys_raise, binary_vector, raise_mod, raise_mod, 256, 256, p); // all one except v-th slot is zero
+
+    // flip binary bits
+    vector<uint64_t> intInd(ring_dim, 1); 
+	Plaintext plainInd;
+	batch_encoder.encode(intInd, plainInd);
+	evaluator.negate_inplace(binary_vector);
+	evaluator.add_plain_inplace(binary_vector, plainInd);
 
 
-    
+    binary_vector = slotToCoeff_WOPrepreocess(seal_context, binary_vector, gal_keys_coeff, ring_dim, p, 1, 1);
 
-    
+    print_ct_to_pl(binary_vector, seal_context, bfv_secret_key, ring_dim);
+
+    cout << "now the noise? " << decryptor.invariant_noise_budget(binary_vector) << endl;
 
     return 0;
 }

@@ -1030,3 +1030,113 @@ Ciphertext raisePowerToPrime(const SEALContext& context, const RelinKeys &relin_
 
 	return tmp;
 }
+
+
+vector<vector<uint64_t>> generateEvaluationMatrix(int start_index, const int ring_dim, const int q = 65537) {
+    vector<vector<uint64_t>> evaluation(ring_dim, vector<uint64_t>(ring_dim));
+
+    for (int i = 0; i < ring_dim; i++) {
+        for (int j = 0; j < ring_dim; j++) {
+            if (i == 0) {
+                evaluation[i][j] = 1;
+            } else if (j == 0) {
+                evaluation[i][j] = 1;
+            } else {
+                evaluation[i][j] = power_seal(start_index + i+1, j, q);
+            }
+        }
+    }
+
+    return evaluation;
+}
+
+
+Ciphertext evaluatePolynomial(const SEALContext context, const Ciphertext poly_ct, const GaloisKeys& gal_keys,
+                              const int ring_dim, const int evaluate_index, const int numcores = 1,
+                              const int q = 65537) {
+    int sq_rt = sqrt(ring_dim/2);
+    Evaluator evaluator(context);
+    BatchEncoder batch_encoder(context);
+    
+    vector<Ciphertext> input_sqrt_list(2*sq_rt);
+
+    Ciphertext poly_ct_copy(poly_ct);
+	evaluator.rotate_columns_inplace(poly_ct_copy, gal_keys);
+
+    input_sqrt_list[0] = poly_ct;
+	input_sqrt_list[sq_rt] = poly_ct_copy;
+
+    for (int c = 1; c < sq_rt; c++) {
+        evaluator.rotate_rows(input_sqrt_list[c-1], sq_rt, gal_keys, input_sqrt_list[c]);
+        evaluator.rotate_rows(input_sqrt_list[c-1+sq_rt], sq_rt, gal_keys, input_sqrt_list[c+sq_rt]);
+    }
+    for (int c = 0; c < sq_rt; c++) {
+        evaluator.transform_to_ntt_inplace(input_sqrt_list[c]);
+        evaluator.transform_to_ntt_inplace(input_sqrt_list[c+sq_rt]);
+    }
+
+    chrono::high_resolution_clock::time_point time_start, time_end;
+    uint64_t total_U = 0;
+
+    vector<Ciphertext> result(sq_rt);
+
+    for (int eval_iter = 0; eval_iter < evaluate_index/ring_dim + 1; eval_iter++) {
+
+        time_start = chrono::high_resolution_clock::now();
+        vector<vector<uint64_t>> evaluation_mat = generateEvaluationMatrix(ring_dim * eval_iter, ring_dim);
+        time_end = chrono::high_resolution_clock::now();
+        total_U += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+        int core_share = sq_rt / numcores;
+        NTL_EXEC_RANGE(numcores, first, last);
+        for (int c  = first; c < last; c++) {
+            for (int iter = c * core_share; iter < (c+1) * core_share; iter++) {
+                for (int j = 0; j < (int) input_sqrt_list.size(); j++) {
+
+                    time_start = chrono::high_resolution_clock::now();
+                    vector<uint64_t> eval_tmp(ring_dim);
+                    for (int i = 0; i < ring_dim; i++) {
+                        int row_index = (i-iter) % (ring_dim/2) < 0 ? (i-iter) % (ring_dim/2) + ring_dim/2 : (i-iter) % (ring_dim/2);
+                        row_index = i < ring_dim/2 ? row_index : row_index + ring_dim/2;
+                        int col_index = (i + j*sq_rt) % (ring_dim/2);
+                        if (j < (int) input_sqrt_list.size() / 2) { // first half
+                            col_index = i < ring_dim/2 ? col_index : col_index + ring_dim/2;
+                        } else {
+                            col_index = i < ring_dim/2 ? col_index + ring_dim/2 : col_index;
+                        }
+                        eval_tmp[i] = ((uint64_t) (evaluation_mat[row_index][col_index])) % q;
+                    }
+
+                    Plaintext U_plain;
+                    batch_encoder.encode(eval_tmp, U_plain);
+                    evaluator.transform_to_ntt_inplace(U_plain, input_sqrt_list[j].parms_id());
+
+                    time_end = chrono::high_resolution_clock::now();
+                    U_time_multi_core += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+                    if (eval_iter == 0 && j == 0) {
+                        evaluator.multiply_plain(input_sqrt_list[j], U_plain, result[iter]);
+                    } else {
+                        Ciphertext temp;
+                        evaluator.multiply_plain(input_sqrt_list[j], U_plain, temp);
+                        evaluator.add_inplace(result[iter], temp);
+                    }
+                }
+            }
+        }
+        NTL_EXEC_RANGE_END;
+    }
+
+    for (int i = 0; i < (int) result.size(); i++) {
+        evaluator.transform_from_ntt_inplace(result[i]);
+    }
+
+    for (int iter = sq_rt-1; iter > 0; iter--) {
+        evaluator.rotate_rows_inplace(result[iter], 1, gal_keys);
+        evaluator.add_inplace(result[iter-1], result[iter]);
+    }
+
+    U_time += total_U;
+
+    return result[0];
+}
