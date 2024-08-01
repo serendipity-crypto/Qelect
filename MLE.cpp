@@ -24,24 +24,36 @@ ability between public keys and final winner tokens).
 */
 
 int main() {
+
+    int numcores = 4;
+    NTL::SetNumThreads(numcores);
   
     int group_size = 2;
 
     int committee_size = 2;
     
     // int ring_dim = group_size; // for 200 people, can encrypt ring_dim / 200 Z_p element
-    int ring_dim = 32;
+    int ring_dim = 32768;
     int n = 4;
     int p = 65537;
 
-    // int numcores = 4;
+    
+    int scalar = 1;
+
+    int k = 32, kbar = 180, m = 181, mbar = 400, repetition = 64;
+    int coeffToSlot_batch_size = mbar;
+    int evaluatePoly_batch_size = 2 * coeffToSlot_batch_size;
+    int evaluatePoly_party_size = 32768;
+    int evaluatePoly_degree = mbar;
+
+    cout << k << kbar << m << mbar << endl;
 
     EncryptionParameters bfv_params(scheme_type::bfv);
     bfv_params.set_poly_modulus_degree(ring_dim);
     auto coeff_modulus = CoeffModulus::Create(ring_dim, { 
                                                           60, 60, 60, 60, 60,
-                                                          60, 60, 60, 60,
-                                                          60, 35, 60
+                                                          60, 60, 60, 60, 60,
+                                                          60, 30, 60
                                                         });
     bfv_params.set_coeff_modulus(coeff_modulus);
     bfv_params.set_plain_modulus(p);
@@ -100,6 +112,11 @@ int main() {
 
 	vector<int> slotToCoeff_steps_coeff = {0, 1};
 	slotToCoeff_steps_coeff.push_back(sqrt(ring_dim/2));
+    int offset = coeffToSlot_batch_size;
+    while (offset < ring_dim/2) {
+        slotToCoeff_steps_coeff.push_back(ring_dim/2 - offset);
+        offset += coeffToSlot_batch_size;
+    }
 	keygen.create_galois_keys(slotToCoeff_steps_coeff, gal_keys_coeff);
     keygen.create_relin_keys(relin_keys_raise);
 
@@ -199,6 +216,8 @@ int main() {
     time_start = chrono::high_resolution_clock::now();
     Ciphertext final_random_root = EvalMultMany_inpace_modImprove(random_root_sum, relin_keys, seal_context, bfv_secret_key);
 
+    // print_ct_to_pl(final_random_root, seal_context, bfv_secret_key, ring_dim);
+
     time_end = chrono::high_resolution_clock::now();
     cout << "** [TIME] ** EvalMultMany_inpace_modImprove: " << \
           chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
@@ -206,26 +225,92 @@ int main() {
 
     cout << "-- [Noise] -- After: " << decryptor.invariant_noise_budget(final_random_root) << endl;
 
+    evaluator.mod_switch_to_next_inplace(final_random_root);
+    cout << "-- [Noise] -- After +++ check mod: " << decryptor.invariant_noise_budget(final_random_root) << endl;
+
+    Ciphertext random_poly = final_random_root;
     // evaluate the poly to extract all roots on indices
-    Ciphertext random_poly = coeffToSlot_WOPrepreocess(seal_context, final_random_root, gal_keys_coeff, ring_dim, p, 1, 1);
-    Ciphertext binary_vector = evaluatePolynomial(seal_context, random_poly, gal_keys_coeff, ring_dim, 8);
+    time_start = chrono::high_resolution_clock::now();
+    vector<Ciphertext> randoms(repetition);
+    for (int i = 0; i < repetition; i++) {
+        randoms[i] = random_poly;
+    }
 
-    map<int, bool> raise_mod = {{4, false}, {16, false}, {64, false}, {256, false}};
-    binary_vector = raisePowerToPrime(seal_context, relin_keys_raise, binary_vector, raise_mod, raise_mod, 256, 256, p); // all one except v-th slot is zero
+    // Ciphertext random_poly_on_slots = coeffToSlot_WOPrepreocess(seal_context, randoms[0], gal_keys_coeff,
+    //                                                             ring_dim, p, scalar, numcores);
 
-    // flip binary bits
-    vector<uint64_t> intInd(ring_dim, 1); 
-	Plaintext plainInd;
-	batch_encoder.encode(intInd, plainInd);
-	evaluator.negate_inplace(binary_vector);
-	evaluator.add_plain_inplace(binary_vector, plainInd);
+    vector<Ciphertext> random_poly_on_slots = coeffToSlot_WOPreprocess_batch(bfv_secret_key, seal_context, randoms, gal_keys_coeff,
+                                                                              ring_dim, coeffToSlot_batch_size, p, scalar, numcores);
+    time_end = chrono::high_resolution_clock::now();
+    cout << "** [TIME] ** coeffToSlot_WOPrepreocess: " << 
+          chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+    print_ct_to_vec(random_poly_on_slots[0], seal_context, bfv_secret_key, ring_dim);
+    print_ct_to_vec(random_poly_on_slots[1], seal_context, bfv_secret_key, ring_dim);
+
+    cout << endl;
+    // print_ct_to_vec(random_poly_on_slots[1], seal_context, bfv_secret_key, 800);
+    
+    cout << "-- [Noise] -- After slotToCoeff: " << decryptor.invariant_noise_budget(random_poly_on_slots[0]) << endl;
+    for (int i = 0; i < (int) random_poly_on_slots.size(); i++) {
+        evaluator.mod_switch_to_next_inplace(random_poly_on_slots[i]);
+    }
+    cout << "-- [Noise] -- After +++ check mod: " << decryptor.invariant_noise_budget(random_poly_on_slots[0]) << endl;
 
 
-    binary_vector = slotToCoeff_WOPrepreocess(seal_context, binary_vector, gal_keys_coeff, ring_dim, p, 1, 1);
+    vector<Ciphertext> binary_poly_roots = evaluatePolynomial_batch(seal_context, random_poly_on_slots, gal_keys_coeff, ring_dim, evaluatePoly_batch_size, 32768, );
 
-    print_ct_to_pl(binary_vector, seal_context, bfv_secret_key, ring_dim);
+    // time_start = chrono::high_resolution_clock::now();
+    // Ciphertext binary_vector = evaluatePolynomial(seal_context, random_poly, gal_keys_coeff, ring_dim, 8);
+    // time_end = chrono::high_resolution_clock::now();
+    // cout << "** [TIME] ** evaluatePolynomial: " <<
+    //       chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+    // total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
-    cout << "now the noise? " << decryptor.invariant_noise_budget(binary_vector) << endl;
+    // cout << "-- [Noise] -- After evaluate poly: " << decryptor.invariant_noise_budget(binary_vector) << endl;
+
+    // evaluator.mod_switch_to_next_inplace(binary_vector);
+
+    // cout << "-- [Noise] -- After evaluate poly +++ check mod: " << decryptor.invariant_noise_budget(binary_vector) << endl;
+
+
+    // map<int, bool> raise_mod = {{4, false}, {16, false}, {64, false}, {256, false}};
+    // time_start = chrono::high_resolution_clock::now();
+    // binary_vector = raisePowerToPrime(seal_context, relin_keys_raise, binary_vector, raise_mod, raise_mod, 256, 256, p); // all one except v-th slot is zero
+    // time_end = chrono::high_resolution_clock::now();
+    // cout << "** [TIME] ** raisePowerToPrime: " <<
+    //       chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+    // total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+
+    // // flip binary bits
+    // vector<uint64_t> intInd(ring_dim, 1); 
+	// Plaintext plainInd;
+	// batch_encoder.encode(intInd, plainInd);
+	// evaluator.negate_inplace(binary_vector);
+	// evaluator.add_plain_inplace(binary_vector, plainInd);
+
+    // time_start = chrono::high_resolution_clock::now();
+    // binary_vector = slotToCoeff_WOPrepreocess(seal_context, binary_vector, gal_keys_coeff, ring_dim, p, 1, 1);
+    // time_end = chrono::high_resolution_clock::now();
+    // cout << "** [TIME] ** slotToCoeff_WOPrepreocess: " <<
+    //       chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+    // total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+
+    // print_ct_to_pl(binary_vector, seal_context, bfv_secret_key, ring_dim);
+
+    // cout << "now the noise? " << decryptor.invariant_noise_budget(binary_vector) << endl;
+
+    cout << "\n\nTotal time: " << total_time << endl;
+
+
+    // vector<vector<uint64_t>> U = generateMatrixU_transpose(4, p);
+    // vector<vector<uint64_t>> U_inverse = generateInverse_vander(U, p);
+
+    // cout << U << endl << U_inverse << endl;
+
+
 
     return 0;
 }

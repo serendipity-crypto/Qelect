@@ -38,7 +38,7 @@ vector<vector<uint64_t>> generateLowerTri_vandermonde(vector<vector<uint64_t>> v
                 lower[i][j] = 0;
             } else if (i == 0 && j == 0) {
                 lower[i][j] = 1;
-            } else {
+            } else if (i == j){
                 long tmp = 1;
                 for (int k = 0; k <= i; k++) {
                     if (k != j) {
@@ -48,6 +48,13 @@ vector<vector<uint64_t>> generateLowerTri_vandermonde(vector<vector<uint64_t>> v
                         tmp = (tmp * ttmp) % q;
                     }
                 }
+                lower[i][j] = (uint64_t) (tmp % q);
+            } else {
+                long tmp = (long) lower[i-1][j];
+                long ttmp = vander[j][1] - vander[i][1];
+                while (ttmp < 0) ttmp = q + ttmp;
+                ttmp = modInverse_seal(ttmp, q);
+                tmp = (tmp * ttmp) % q;
                 lower[i][j] = (uint64_t) (tmp % q);
             }
         }
@@ -100,7 +107,9 @@ vector<vector<uint64_t>> matrixMultiplication(vector<vector<uint64_t>> a, vector
 
 vector<vector<uint64_t>> generateInverse_vander(vector<vector<uint64_t>> vander, const int q = 65537) {
     vector<vector<uint64_t>> upper = generateUpperTri_vandermonde(vander);
+    cout << "       upper done...\n";
     vector<vector<uint64_t>> lower = generateLowerTri_vandermonde(vander);
+    cout << "       lower done...\n";
 
     vector<vector<uint64_t>> result = matrixMultiplication(upper, lower);
 
