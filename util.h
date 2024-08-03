@@ -486,11 +486,16 @@ Ciphertext EvalMultMany_inpace_modImprove_extract(vector<Ciphertext> ciphertexts
 }
 
 inline
-Ciphertext EvalMultMany_inpace_modImprove(vector<Ciphertext>& ciphertexts, const RelinKeys &relin_keys,
+Ciphertext EvalMultMany_inpace_modImprove(vector<Ciphertext>& input, const RelinKeys &relin_keys,
                                           const SEALContext& context, SecretKey& sk) {
     Evaluator evaluator(context);
     Decryptor decryptor(context, sk);
     int counter = 0;
+
+    vector<Ciphertext> ciphertexts(input.size());
+    for (int i = 0; i < (int) input.size(); i++) {
+        ciphertexts[i] = input[i];
+    }
 
     while(ciphertexts.size() != 1){
         for(size_t i = 0; i < ciphertexts.size()/2; i++){
@@ -919,12 +924,12 @@ Ciphertext coeffToSlot_WOPreprocess(const SEALContext& context, Ciphertext& inpu
 }
 
 vector<Ciphertext> coeffToSlot_WOPreprocess_batch(SecretKey& sk, SEALContext& context, vector<Ciphertext>& input_ct, const GaloisKeys& gal_keys,
-                                                   const int degree, const int batch_size, const uint64_t q = 65537, const uint64_t scalar = 1,
-                                                   const int numcores = 8) {
+                                                  const int degree, const int batch_size, const uint64_t q = 65537, const uint64_t scalar = 1,
+                                                  const int numcores = 8) {
 
     // assume each ct has batch_size info, we need iter ciphertexts to pack them together
     int iter = ceil((double) (input_ct.size() * batch_size) / (double) degree);
-    int pack_in_half_ct = floor( (double) (degree/2) / (double) batch_size);
+    int pack_in_half_ct = floor( (double) (degree/2) / (double) (batch_size));
     int pack_in_one_ct = 2*pack_in_half_ct;
 
     vector<Ciphertext> results(iter);
@@ -937,6 +942,7 @@ vector<Ciphertext> coeffToSlot_WOPreprocess_batch(SecretKey& sk, SEALContext& co
 
     vector<vector<Ciphertext>> core_results(results.size(), vector<Ciphertext>(numcores));
     NTL::SetNumThreads(numcores);
+
     NTL_EXEC_RANGE(input_ct.size(), first, last);
 
     for (int i = first; i < last; i++) {
@@ -946,7 +952,7 @@ vector<Ciphertext> coeffToSlot_WOPreprocess_batch(SecretKey& sk, SEALContext& co
         for (int j = 0; j < degree; j++) {
             rotator.data()[j] = 0;
         }
-        int index_ct = floor((double) i * batch_size / (double) (degree/2) / (double) 2); // the index of result ciphertext
+        int index_ct = floor((double) i / (double) pack_in_one_ct); // the index of result ciphertext
         int rot_row_offset = batch_size * (i % pack_in_half_ct); // slot on row
         bool rot_col_offset = (i % pack_in_one_ct) >= pack_in_half_ct ? true : false; // if should rotate the first half and second half
         int rot_offset = rot_row_offset + degree/2 * rot_col_offset; // encoded started from this slot
@@ -973,28 +979,32 @@ vector<Ciphertext> coeffToSlot_WOPreprocess_batch(SecretKey& sk, SEALContext& co
         }
     }
 
+
     for (int i = 0; i < (int) results.size(); i++) {
         results[i] = coeffToSlot_WOPreprocess(context, results[i], gal_keys, degree, q, scalar, numcores);
-    }   
-
-    vector<Ciphertext> unpack_results(2 * results.size()); // extract one-out-of-two consecutive packed selection vectors, for poly eval
-    Plaintext extractor_pl;
-    vector<uint64_t> extractor(degree);
-    for (int i = 0; i < (int) results.size(); i++) {
-        for (int j = 0; j < degree; j++) {
-            extractor[j] = (j / batch_size) % 2 == 0 ? 1 : 0; // the 0-th batch, 2-nd batch, 4-th batch, ....
-        }
-        batch_encoder.encode(extractor, extractor_pl);
-        evaluator.multiply_plain(results[i], extractor_pl, unpack_results[2*i]);
-
-        for (int j = 0; j < degree; j++) {
-            extractor[j] = (j / batch_size) % 2 == 1 ? 1 : 0; // the 1-st batch, 3-rd batch, 5-th batch, ....
-        }
-        batch_encoder.encode(extractor, extractor_pl);
-        evaluator.multiply_plain(results[i], extractor_pl, unpack_results[2*i + 1]);
     }
+    print_ct_to_vec(results[0], context, sk, degree);
 
-    return unpack_results;
+    // vector<Ciphertext> unpack_results(2 * results.size()); // extract one-out-of-two consecutive packed selection vectors, for poly eval
+    // Plaintext extractor_pl;
+    // vector<uint64_t> extractor(degree);
+    // for (int i = 0; i < (int) results.size(); i++) {
+    //     for (int j = 0; j < degree/2; j++) {
+    //         extractor[j] = (j / batch_size) % 2 == 0 ? 1 : 0; // the 0-th batch, 2-nd batch, 4-th batch, ....
+    //         extractor[j+degree/2] = extractor[j];
+    //     }
+    //     batch_encoder.encode(extractor, extractor_pl);
+    //     evaluator.multiply_plain(results[i], extractor_pl, unpack_results[2*i]);
+
+    //     for (int j = 0; j < degree/2; j++) {
+    //         extractor[j] = (j / batch_size) % 2 == 1 ? 1 : 0; // the 1-st batch, 3-rd batch, 5-th batch, ....
+    //         extractor[j+degree/2] = extractor[j];
+    //     }
+    //     batch_encoder.encode(extractor, extractor_pl);
+    //     evaluator.multiply_plain(results[i], extractor_pl, unpack_results[2*i + 1]);
+    // }
+
+    return results;
 }
 
 
@@ -1285,115 +1295,132 @@ Ciphertext evaluatePolynomial(const SEALContext context, const Ciphertext poly_c
 }
 
 
-
-Ciphertext evaluatePolynomial_small(const SEALContext context, const Ciphertext poly_ct, const GaloisKeys& gal_keys,
-                              const int ring_dim, const int evaluate_index, const int numcores = 1,
-                              const int q = 65537) {
-    int sq_rt = 40;
+vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext context, const vector<Ciphertext> poly_ct, const GaloisKeys& gal_keys,
+                                            const int ring_dim, const int evaluatePoly_batch_size, const int evaluatePoly_party_size,
+                                            const int evaluatePoly_degree, const int numcores = 8, const int q = 65537) {
+                                                
+    int sq_batch = sqrt(evaluatePoly_batch_size); // 20 for batch_size = sbar = 400
     Evaluator evaluator(context);
     BatchEncoder batch_encoder(context);
-    
-    vector<Ciphertext> input_sqrt_list(sq_rt);
 
-    Ciphertext poly_ct_copy(poly_ct);
-    evaluator.rotate_columns_inplace(poly_ct_copy, gal_keys);
+    int pack_in_half_ct = floor( (double) (ring_dim/2) / (double) (2*evaluatePoly_batch_size));
 
-    input_sqrt_list[0] = poly_ct;
-
-    chrono::high_resolution_clock::time_point ss, ee, sss, eee;
-
-    sss = chrono::high_resolution_clock::now();
-
-    ss = chrono::high_resolution_clock::now();
-    for (int c = 1; c < sq_rt; c++) {
-        evaluator.rotate_rows(input_sqrt_list[c-1], sq_rt, gal_keys, input_sqrt_list[c]);
-    }
-    for (int c = 0; c < sq_rt; c++) {
-        evaluator.transform_to_ntt_inplace(input_sqrt_list[c]);
-    }
-    ee = chrono::high_resolution_clock::now();
-    cout << "###### prepare time: " << chrono::duration_cast<chrono::microseconds>(ee - ss).count() << endl;
-
-    chrono::high_resolution_clock::time_point time_start, time_end, s, e;
-    uint64_t total_U = 0, total_multi = 0;
-
-    vector<Ciphertext> result(sq_rt);
-
-    int count = 0;
-
-    s = chrono::high_resolution_clock::now();
-    for (int eval_iter = 0; eval_iter < evaluate_index/ring_dim + 1; eval_iter++) {
-
-        time_start = chrono::high_resolution_clock::now();
-        vector<vector<uint64_t>> evaluation_mat = generateEvaluationMatrix(ring_dim * eval_iter, ring_dim);
-        time_end = chrono::high_resolution_clock::now();
-        total_U += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
-
-        for (int i = 0; i < (int) input_sqrt_list.size(); i++) {
-            int j = 0;
-
-            ss = chrono::high_resolution_clock::now();
-            evaluator.add_inplace(input_sqrt_list[j], input_sqrt_list[j]);
-
-            time_start = chrono::high_resolution_clock::now();
-            vector<uint64_t> eval_tmp(ring_dim);
-            for (int i = 0; i < ring_dim; i++) {
-                int row_index = (i-i) % (ring_dim/2) < 0 ? (i-i) % (ring_dim/2) + ring_dim/2 : (i-i) % (ring_dim/2);
-                row_index = i < ring_dim/2 ? row_index : row_index + ring_dim/2;
-                int col_index = (i + j*sq_rt) % (ring_dim/2);
-                if (j < (int) input_sqrt_list.size() / 2) { // first half
-                    col_index = i < ring_dim/2 ? col_index : col_index + ring_dim/2;
-                } else {
-                    col_index = i < ring_dim/2 ? col_index + ring_dim/2 : col_index;
-                }
-                eval_tmp[i] = ((uint64_t) (evaluation_mat[0][0])) % q;
-            }
-
-            Plaintext U_plain;
-            batch_encoder.encode(eval_tmp, U_plain);
-            evaluator.transform_to_ntt_inplace(U_plain, input_sqrt_list[j].parms_id());
-
-            time_end = chrono::high_resolution_clock::now();
-            U_time_multi_core += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
-
-            count++;
-            if (i == 0) {
-                evaluator.multiply_plain(input_sqrt_list[i], U_plain, result[i]);
+    vector<uint64_t> extractor(ring_dim);
+    vector<Plaintext> extractor_ntt(sq_batch);
+    for (int i = 0; i < sq_batch; i++) {
+        for (int j = 0; j < ring_dim/2; j++) {
+            if (j >= 2*evaluatePoly_batch_size * pack_in_half_ct) {
+                extractor[j] = 0;
+                extractor[j + ring_dim/2] = 0;
+            } else if ((j / evaluatePoly_batch_size) % 2 == 1) {
+                extractor[j] = 0;
+                extractor[j + ring_dim/2] = 0;
             } else {
-                // Ciphertext temp;
-                // evaluator.multiply_plain(input_sqrt_list[i], U_plain, temp);
-                // evaluator.add_inplace(result[i], temp);
-                evaluator.multiply_plain(input_sqrt_list[i], U_plain, result[i]);
+                extractor[j] = ((j % evaluatePoly_batch_size) / sq_batch) == i ? 1 : 0;
+                extractor[j + ring_dim/2] =  extractor[j];
+            }
+        }
+        batch_encoder.encode(extractor, extractor_ntt[i]);
+        evaluator.transform_to_ntt_inplace(extractor_ntt[i], poly_ct[0].parms_id());
+    }
+
+    vector<vector<Ciphertext>> results(poly_ct.size(), vector<Ciphertext>(82));
+    
+    int flip = 0; // indicate whether the non-zero batch is in the 2nd or 1st allocate batch_size slots
+    for (int poly_ind = 0; poly_ind < (int) poly_ct.size(); poly_ind++) {
+
+        // for each ct, same as normal evaluation w/o batching, we optimize the ntt and rotation and multiplication, prepare sq of ntt first
+        vector<Ciphertext> poly_ntt(sq_batch);
+        Ciphertext tmp;
+        evaluator.multiply_plain(poly_ct[poly_ind], extractor_ntt[0], tmp);
+        evaluator.rotate_rows(tmp, -evaluatePoly_batch_size, gal_keys, poly_ntt[0]);
+        evaluator.add_inplace(poly_ntt[0], poly_ct[poly_ind]);
+        for (int i = 1; i < sq_batch; i++) {
+            evaluator.multiply_plain(poly_ct[poly_ind], extractor_ntt[sq_batch-i], tmp);
+            evaluator.rotate_rows_inplace(tmp, (sq_batch - i)*sq_batch, gal_keys);
+            evaluator.rotate_rows(poly_ntt[i-1], -sq_batch, gal_keys, poly_ntt[i]);
+            evaluator.add_inplace(poly_ntt[i], tmp);
+        }
+
+        // cout << "Printing.... \n";
+        // print_ct_to_vec(poly_ntt[0], context, sk, ring_dim);
+        // print_ct_to_vec(poly_ntt[7], context, sk, ring_dim);
+        // print_ct_to_vec(poly_ntt[13], context, sk, ring_dim);
+        // print_ct_to_vec(poly_ntt[19], context, sk, ring_dim);
+
+        
+        for (int i = 0; i < sq_batch; i++) {
+            evaluator.transform_to_ntt_inplace(poly_ntt[i]);
+        }
+
+        // // int evaluate_core_share = (32000/evaluatePoly_batch_size) / numcores; // first divide 32768 into 32000 and 768, to take full advantage of 8 core
+        NTL_EXEC_RANGE(32000/evaluatePoly_batch_size, first, last);
+        // need 80 iterations, each evaluate indices with batch_size = 400 different values
+        for (int c = first; c < last; c++) {
+            vector<uint64_t> indices(evaluatePoly_batch_size); // prepare the indices values
+            for (int i = 0; i < evaluatePoly_batch_size; i++) {
+                indices[i] = c*evaluatePoly_batch_size + i;
             }
 
-            ee = chrono::high_resolution_clock::now();
-            total_multi += chrono::duration_cast<chrono::microseconds>(ee - ss).count();
+            vector<Ciphertext> result_one_batch(sq_batch);
+            chrono::high_resolution_clock::time_point s1, e1;
+            s1 = chrono::high_resolution_clock::now();
+            for (int i = 0; i < sq_batch; i++) {
+                vector<uint64_t> tmp_vec(ring_dim);
+
+                for (int j = 0; j < sq_batch; j++) {
+                    Plaintext indice_pl;
+                    for (int k = 0; k < ring_dim/2; k++) {
+                        // fall in the allocated rotation slots, always zero
+                        if ((((k-i) / evaluatePoly_batch_size) % 2 != flip) || (k >= 2*evaluatePoly_batch_size * pack_in_half_ct)) {
+                            tmp_vec[k] = 0;
+                        } else {
+                            int ind = (k-i) % evaluatePoly_batch_size;
+                            int power = ind - j*sq_batch < 0 ? ind - j*sq_batch + evaluatePoly_batch_size : ind - j*sq_batch;
+                            tmp_vec[k] = power_seal(indices[ind], power, q);
+                        }
+                        tmp_vec[k+ring_dim/2] = tmp_vec[k];
+                    }
+                    // cout << "------------- j : " << j << " , " << indices[(2-i) % evaluatePoly_batch_size] << ", "
+                    //          << " , " << tmp_vec[2]  << endl << tmp_vec << endl;
+                    batch_encoder.encode(tmp_vec, indice_pl);
+                    evaluator.transform_to_ntt_inplace(indice_pl, poly_ntt[0].parms_id());
+                    if (j == 0) {
+                        evaluator.multiply_plain(poly_ntt[j], indice_pl, result_one_batch[i]);
+                    } else {
+                        Ciphertext tmp_ct;
+                        evaluator.multiply_plain(poly_ntt[j], indice_pl, tmp_ct);
+                        evaluator.add_inplace(result_one_batch[i], tmp_ct);
+                    }
+                }
+            }
+            e1 = chrono::high_resolution_clock::now();
+            cout << "one iteration time: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
+
+            for (int i = sq_batch-1; i >=0; i--) {
+                if (i == sq_batch-1) {
+                    results[poly_ind][c] = result_one_batch[i];
+                } else {
+                    evaluator.rotate_rows_inplace(results[poly_ind][c], 1, gal_keys); 
+                    evaluator.add_inplace(results[poly_ind][c], result_one_batch[i]);
+                }
+            }
+            e1 = chrono::high_resolution_clock::now();
+            cout << "one iteration time with some caveat: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
         }
+        NTL_EXEC_RANGE_END;
+
+
+        // NTL_EXEC_RANGE(768, first, last);
+        // for (int c = first; c < last; c++) {
+
+        // }
+        // NTL_EXEC_RANGE_END;
+
+        flip = 1 - flip;
     }
-    e = chrono::high_resolution_clock::now();
 
-    cout << "   ????? " << chrono::duration_cast<chrono::microseconds>(e - s).count() << ", " << U_time_multi_core << endl;
+    return results;
 
-    s = chrono::high_resolution_clock::now();
-    for (int i = 0; i < (int) result.size(); i++) {
-        evaluator.transform_from_ntt_inplace(result[i]);
-    }
-
-    for (int iter = sq_rt-1; iter > 0; iter--) {
-        evaluator.rotate_rows_inplace(result[iter], 1, gal_keys);
-        evaluator.add_inplace(result[iter-1], result[iter]);
-    }
-    e = chrono::high_resolution_clock::now();
-    cout << "   !!!!! " << chrono::duration_cast<chrono::microseconds>(e - s).count() << endl;
-
-    eee = chrono::high_resolution_clock::now();
-
-    cout << "   should be: " << chrono::duration_cast<chrono::microseconds>(eee - sss).count() << endl;
-
-    U_time += total_U;
-    cout << "###### " << count << " multiplications.\n";
-    cout << "   ** [TIME] ** multiplication time: " << total_multi << ", " << total_multi / count << ", " << U_time << endl;
-
-
-    return result[0];
 }
+
