@@ -1344,30 +1344,21 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
             evaluator.rotate_rows(poly_ntt[i-1], -sq_batch, gal_keys, poly_ntt[i]);
             evaluator.add_inplace(poly_ntt[i], tmp);
         }
-
-        // cout << "Printing.... \n";
-        // print_ct_to_vec(poly_ntt[0], context, sk, ring_dim);
-        // print_ct_to_vec(poly_ntt[7], context, sk, ring_dim);
-        // print_ct_to_vec(poly_ntt[13], context, sk, ring_dim);
-        // print_ct_to_vec(poly_ntt[19], context, sk, ring_dim);
-
         
-        // for (int i = 0; i < sq_batch; i++) {
-        //     evaluator.transform_to_ntt_inplace(poly_ntt[i]);
-        // }
+        for (int i = 0; i < sq_batch; i++) {
+            evaluator.transform_to_ntt_inplace(poly_ntt[i]);
+        }
 
         // // int evaluate_core_share = (32000/evaluatePoly_batch_size) / numcores; // first divide 32768 into 32000 and 768, to take full advantage of 8 core
         NTL_EXEC_RANGE(32000/evaluatePoly_batch_size, first, last);
         // need 80 iterations, each evaluate indices with batch_size = 400 different values
-        for (int c = first; c < first+1; c++) {
+        for (int c = first; c < last; c++) {
             vector<uint64_t> indices(evaluatePoly_batch_size); // prepare the indices values
             for (int i = 0; i < evaluatePoly_batch_size; i++) {
                 indices[i] = c*evaluatePoly_batch_size + i;
             }
 
             vector<Ciphertext> result_one_batch(sq_batch);
-            chrono::high_resolution_clock::time_point s1, e1;
-            s1 = chrono::high_resolution_clock::now();
             for (int i = 0; i < sq_batch; i++) {
                 vector<uint64_t> tmp_vec(ring_dim);
 
@@ -1391,7 +1382,7 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
                     }
                     cout << endl;
                     batch_encoder.encode(tmp_vec, indice_pl);
-                    // evaluator.transform_to_ntt_inplace(indice_pl, poly_ntt[0].parms_id());
+                    evaluator.transform_to_ntt_inplace(indice_pl, poly_ntt[0].parms_id());
 
                     print_ct_to_vec(poly_ntt[j], context, sk, 20);
                     if (j == 0) {
@@ -1404,12 +1395,10 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
                     print_ct_to_vec(result_one_batch[i], context, sk, 20);
                 }
             }
-            e1 = chrono::high_resolution_clock::now();
-            cout << "one iteration time: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
 
-            // for (int i = 0; i < sq_batch; i++) {
-            //     evaluator.transform_from_ntt_inplace(result_one_batch[i]);
-            // }
+            for (int i = 0; i < sq_batch; i++) {
+                evaluator.transform_from_ntt_inplace(result_one_batch[i]);
+            }
 
             for (int i = sq_batch-1; i >=0; i--) {
                 if (i == sq_batch-1) {
@@ -1419,10 +1408,7 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
                     evaluator.add_inplace(results[poly_ind][c], result_one_batch[i]);
                 }
             }
-            e1 = chrono::high_resolution_clock::now();
-            cout << "one iteration time with some caveat: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
-
-            if (c == 0) print_ct_to_vec(results[0][0], context, sk, ring_dim);
+            // if (c == 0) print_ct_to_vec(results[0][0], context, sk, ring_dim);
         }
         NTL_EXEC_RANGE_END;
 
