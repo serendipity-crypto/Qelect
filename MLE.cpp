@@ -42,7 +42,7 @@ int main() {
 
     // ideally, we just need the s to be at least 235, set sbar = 400 (400 coefficients, degree of 399), to guarantee sufficient unique s
     // for k = 32, kbar could be 40, set 52 to increase m size and thus reduce repetition time 
-    int k = 32, kbar = 52, m = 210, sbar = 400, repetition = 40;
+    int k = 32, kbar = 40, m = 170, sbar = 300, repetition = 52;
     int coeffToSlot_batch_size = 2*sbar;
     int evaluatePoly_batch_size = sbar;
     int evaluatePoly_party_size = 32768;
@@ -262,10 +262,13 @@ int main() {
 
     // print_ct_to_vec(random_poly[0], seal_context, bfv_secret_key, ring_dim);
 
+    cout << decryptor.invariant_noise_budget(random_poly[0]) << endl;
+
     vector<vector<Ciphertext>> results = evaluatePolynomial_batch(bfv_secret_key, seal_context, random_poly, gal_keys_coeff, ring_dim,
-                                                                  evaluatePoly_batch_size, evaluatePoly_party_size, evaluatePoly_degree);
+                                                                  evaluatePoly_batch_size, evaluatePoly_party_size, evaluatePoly_degree,
+                                                                  numcores);
 
-
+    cout << decryptor.invariant_noise_budget(results[0][0]) << endl;
     //////////////////////////
     //////////////////////////
     //////////////////////////
@@ -369,12 +372,12 @@ int main() {
     // cout << "-- [Noise] -- After evaluate poly +++ check mod: " << decryptor.invariant_noise_budget(binary_vector) << endl;
 
 
-    // map<int, bool> raise_mod = {{4, false}, {16, false}, {64, false}, {256, false}};
-    // time_start = chrono::high_resolution_clock::now();
-    // binary_vector = raisePowerToPrime(seal_context, relin_keys_raise, binary_vector, raise_mod, raise_mod, 256, 256, p); // all one except v-th slot is zero
-    // time_end = chrono::high_resolution_clock::now();
-    // cout << "** [TIME] ** raisePowerToPrime: " <<
-    //       chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+    map<int, bool> raise_mod = {{4, false}, {16, false}, {64, false}, {256, false}};
+    time_start = chrono::high_resolution_clock::now();
+    Ciphertext binary_vector = raisePowerToPrime(seal_context, relin_keys_raise, results[0][0], raise_mod, raise_mod, 256, 256, p); // all one except v-th slot is zero
+    time_end = chrono::high_resolution_clock::now();
+    cout << "** [TIME] ** raisePowerToPrime: " <<
+          chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
     // total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
 

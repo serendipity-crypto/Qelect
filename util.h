@@ -1037,7 +1037,7 @@ Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& inp
         evaluator.transform_to_ntt_inplace(input_sqrt_list[c+sq_rt]);
     }
 
-    chrono::high_resolution_clock::time_point time_start, time_end;
+    chrono::high_resolution_clock::time_point time_start, time_end, s, e;
     uint64_t total_U = 0;
 
     time_start = chrono::high_resolution_clock::now();
@@ -1067,9 +1067,12 @@ Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& inp
                     U_tmp[i] = ((uint64_t) (U[row_index][col_index] * scalar)) % q;
                 }
 
+                s = chrono::high_resolution_clock::now();
                 Plaintext U_plain;
                 batch_encoder.encode(U_tmp, U_plain);
                 evaluator.transform_to_ntt_inplace(U_plain, input_sqrt_list[j].parms_id());
+                e = chrono::high_resolution_clock::now();
+                total_U += chrono::duration_cast<chrono::microseconds>(e - s).count();
 
                 time_end = chrono::high_resolution_clock::now();
                 U_time_multi_core += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
@@ -1096,7 +1099,7 @@ Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& inp
     }
 
     U_time += total_U;
-    // cout << "** [TIME] ** TOTAL process U time: " << total_U << endl;
+    cout << "   TOTAL process U time: " << total_U << endl;
 
     return result[0];
 }
@@ -1327,7 +1330,7 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
         evaluator.transform_to_ntt_inplace(extractor_ntt[i], poly_ct[0].parms_id());
     }
 
-    vector<vector<Ciphertext>> results(poly_ct.size(), vector<Ciphertext>(82));
+    vector<vector<Ciphertext>> results(poly_ct.size(), vector<Ciphertext>(164));
     
     int flip = 0; // indicate whether the non-zero batch is in the 2nd or 1st allocate batch_size slots
     for (int poly_ind = 0; poly_ind < (int) poly_ct.size(); poly_ind++) {
@@ -1349,13 +1352,15 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
             evaluator.transform_to_ntt_inplace(poly_ntt[i]);
         }
 
-        // // int evaluate_core_share = (32000/evaluatePoly_batch_size) / numcores; // first divide 32768 into 32000 and 768, to take full advantage of 8 core
-        NTL_EXEC_RANGE(32000/evaluatePoly_batch_size, first, last);
-        // need 80 iterations, each evaluate indices with batch_size = 400 different values
+        chrono::high_resolution_clock::time_point s1, e1;
+        s1 = chrono::high_resolution_clock::now();
+        // 65537 values, 164 batches, each 400 values, the last batch take 400-63 values
+        NTL_EXEC_RANGE(164, first, last);
         for (int c = first; c < last; c++) {
             vector<uint64_t> indices(evaluatePoly_batch_size); // prepare the indices values
             for (int i = 0; i < evaluatePoly_batch_size; i++) {
                 indices[i] = c*evaluatePoly_batch_size + i;
+                indices[i] = indices[i] >= 65537 ? 0 : indices[i];
             }
 
             vector<Ciphertext> result_one_batch(sq_batch);
@@ -1376,15 +1381,9 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
                         }
                         tmp_vec[k+ring_dim/2] = tmp_vec[k];
                     }
-                    cout << i << ", " << j << endl;
-                    for (int aa = 0; aa < 20; aa++) {
-                        cout << tmp_vec[aa] << " ";
-                    }
-                    cout << endl;
                     batch_encoder.encode(tmp_vec, indice_pl);
                     evaluator.transform_to_ntt_inplace(indice_pl, poly_ntt[0].parms_id());
 
-                    print_ct_to_vec(poly_ntt[j], context, sk, 20);
                     if (j == 0) {
                         evaluator.multiply_plain(poly_ntt[j], indice_pl, result_one_batch[i]);
                     } else {
@@ -1392,7 +1391,6 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
                         evaluator.multiply_plain(poly_ntt[j], indice_pl, tmp_ct);
                         evaluator.add_inplace(result_one_batch[i], tmp_ct);
                     }
-                    print_ct_to_vec(result_one_batch[i], context, sk, 20);
                 }
             }
 
@@ -1408,19 +1406,16 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
                     evaluator.add_inplace(results[poly_ind][c], result_one_batch[i]);
                 }
             }
-            // if (c == 0) print_ct_to_vec(results[0][0], context, sk, ring_dim);
         }
         NTL_EXEC_RANGE_END;
-
-
-        // NTL_EXEC_RANGE(768, first, last);
-        // for (int c = first; c < last; c++) {
-
-        // }
-        // NTL_EXEC_RANGE_END;
+        e1 = chrono::high_resolution_clock::now();
+        cout << "Total eval time: " << chrono::duration_cast<chrono::microseconds>(e1 - s1).count() << endl;
 
         flip = 1 - flip;
     }
+
+    print_ct_to_vec(results[0][0], context, sk, 800);
+    print_ct_to_vec(results[0][19], context, sk, 800);
 
 
     return results;
