@@ -1414,11 +1414,45 @@ vector<vector<Ciphertext>> evaluatePolynomial_batch(SecretKey& sk, SEALContext c
         flip = 1 - flip;
     }
 
-    print_ct_to_vec(results[0][0], context, sk, 800);
-    print_ct_to_vec(results[0][19], context, sk, 800);
-
-
     return results;
-
 }
+
+
+void expandFirstToAll(SecretKey& sk, SEALContext context, Ciphertext& input, const GaloisKeys& gal_keys,
+                      const int ring_dim) {
+
+    Evaluator evaluator(context);
+    BatchEncoder batch_encoder(context);
+
+    int counter = 0;
+    vector<uint64_t> vvv(ring_dim);
+    Plaintext extractor;
+    for (int i = 0; i < log2(ring_dim); i++) {
+        for (int j = 0; j < ring_dim; j++) {
+            vvv[j] = 0;
+        }
+        int gap = ring_dim / (1<<i);
+        for (int j = 0; j < (1<<i); j++) {
+            vvv[gap * j] = 1;
+        }
+        batch_encoder.encode(vvv, extractor);
+        Ciphertext extracted;
+        evaluator.multiply_plain(input, extractor, extracted);
+
+        int rotate_ind = gap / 2;
+        if (rotate_ind == ring_dim / 2) {
+            evaluator.rotate_columns_inplace(extracted, gal_keys);
+        } else {
+            evaluator.rotate_rows_inplace(extracted, -rotate_ind, gal_keys);
+        }
+        evaluator.add_inplace(input, extracted); 
+
+        counter++;
+        if (counter == 3) {
+            counter = 0;
+            evaluator.mod_switch_to_next_inplace(input);
+        }
+    }
+}
+
 

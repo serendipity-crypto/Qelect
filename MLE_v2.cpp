@@ -43,9 +43,9 @@ int main() {
     EncryptionParameters bfv_params(scheme_type::bfv);
     bfv_params.set_poly_modulus_degree(ring_dim);
     auto coeff_modulus = CoeffModulus::Create(ring_dim, { 
+                                                          60, 60, 60, 60, 60, 60,
+                                                          60, 60, 60, 60, 60, 60,
                                                           60, 60, 60, 60,
-                                                          60, 60, 60, 60,
-                                                          60, 60, 60, 60
                                                         });
     bfv_params.set_coeff_modulus(coeff_modulus);
     bfv_params.set_plain_modulus(p);
@@ -83,7 +83,10 @@ int main() {
 
     GaloisKeys gal_keys, gal_keys_expand, gal_keys_coeff, gal_keys_coeff_second;
 
-    vector<int> stepsfirst = {1};
+    vector<int> stepsfirst = {0, 1};
+    for (int i = 0; i < log2(ring_dim/2); i++) {
+        stepsfirst.push_back(- (1<<i));
+    }
     keygen.create_galois_keys(stepsfirst, gal_keys);
 
     // gal keys for slotToCoeff
@@ -206,15 +209,21 @@ int main() {
 	vvv[0] = 1; // extractor
 	batch_encoder.encode(vvv, pp);
 	evaluator.multiply_plain(tmp_random, pp, extracted);
+    
+    cout << decryptor.invariant_noise_budget(extracted) << endl;
 
 	// expand random values to all slots
-	Ciphertext extracted_all_slots = slotToCoeff_WOPrepreocess(seal_context, extracted, gal_keys_coeff, ring_dim, p, scalar, numcores);
+    expandFirstToAll(bfv_secret_key, seal_context, extracted, gal_keys, ring_dim);
+    Ciphertext extracted_all_slots = extracted;
+
+	// Ciphertext extracted_all_slots = slotToCoeff_WOPrepreocess(seal_context, extracted, gal_keys_coeff, ring_dim, p, scalar, numcores);
 	time_end = chrono::high_resolution_clock::now();
 	cout << "	first : slotToCoeff_WOPrepreocess: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	cout << decryptor.invariant_noise_budget(extracted_all_slots) << endl;
 	
 	evaluator.negate_inplace(extracted_all_slots); // [-r, -r, ..., -r]
-	map<int, bool> raise_mod = {{4, false}, {16, false}, {64, false}, {256, false}};
+    map<int, bool> raise_mod_1 = {{2, false}, {8, false}, {32, false}, {128, false}};
+	map<int, bool> raise_mod_2 = {{4, false}, {16, false}, {64, false}, {256, false}};
 
 	Ciphertext evaluated1, evaluated2;
 	for (int i = 0; i < ring_dim; i++) {
@@ -222,7 +231,7 @@ int main() {
     }
 	batch_encoder.encode(vvv, pp);
 	evaluator.add_plain(extracted_all_slots, pp, evaluated1); // [-r, -r, ..., -r] + [0, 1, ..., n-1]
-	evaluated1 = raisePowerToPrime(seal_context, relin_keys, evaluated1, raise_mod, raise_mod, 256, 256, p);
+	evaluated1 = raisePowerToPrime(seal_context, relin_keys, evaluated1, raise_mod_2, raise_mod_2, 256, 256, p);
 	time_end = chrono::high_resolution_clock::now();
 	cout << "	raisePower: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	cout << decryptor.invariant_noise_budget(evaluated1) << endl;
@@ -232,7 +241,7 @@ int main() {
     }
 	batch_encoder.encode(vvv, pp);
 	evaluator.add_plain(extracted_all_slots, pp, evaluated2); // [-r, -r, ..., -r] + [0, 1, ..., n-1]
-	evaluated2 = raisePowerToPrime(seal_context, relin_keys, evaluated2, raise_mod, raise_mod, 256, 256, p);
+	evaluated2 = raisePowerToPrime(seal_context, relin_keys, evaluated2, raise_mod_2, raise_mod_2, 256, 256, p);
 	time_end = chrono::high_resolution_clock::now();
 	cout << "	raisePower: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	cout << decryptor.invariant_noise_budget(evaluated2) << endl;
@@ -243,7 +252,7 @@ int main() {
 	cout << "	second: slotToCoeff_WOPrepreocess: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	cout << decryptor.invariant_noise_budget(evaluated1) << endl;
 
-	evaluator.mod_switch_to_next_inplace(evaluated1);
+	// evaluator.mod_switch_to_next_inplace(evaluated1);
 	cout << evaluated1.coeff_modulus_size() << endl;
 	cout << decryptor.invariant_noise_budget(evaluated1) << endl;
 
