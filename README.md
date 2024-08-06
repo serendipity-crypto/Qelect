@@ -10,7 +10,7 @@ sudo apt-get install libgmp3-dev # if no gmp
 sudo apt-get install libntl-dev=11.4.3-1build1 # if no ntl
 
 # change build_path to where you want the dependency libraries installed
-MPSDIR=~/MPS
+MPSDIR=~
 BUILDDIR=$MPSDIR/MPS/build
 
 # used for data type definitions and distribution, generators, etc
