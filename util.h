@@ -66,6 +66,7 @@ void saveCiphertext(Ciphertext& ct, const uint64_t index, const string folder = 
 void loadCiphertext(const SEALContext& context, Ciphertext& ct, const uint64_t index,
                     const string folder = "perm/") {
 
+    // uint64_t ind = index / 2;
     ifstream datafile;
     datafile.open ("../data/"+folder+to_string(index)+".txt");
 
@@ -1424,10 +1425,10 @@ void expandFirstToAll(SecretKey& sk, SEALContext context, Ciphertext& input, con
     Evaluator evaluator(context);
     BatchEncoder batch_encoder(context);
 
-    int counter = 0;
+    vector<Plaintext> extractor(log2(ring_dim));
     vector<uint64_t> vvv(ring_dim);
-    Plaintext extractor;
-    for (int i = 0; i < log2(ring_dim); i++) {
+    NTL_EXEC_RANGE(log2(ring_dim), first, last);
+    for (int i = first; i < last; i++) {
         for (int j = 0; j < ring_dim; j++) {
             vvv[j] = 0;
         }
@@ -1435,9 +1436,26 @@ void expandFirstToAll(SecretKey& sk, SEALContext context, Ciphertext& input, con
         for (int j = 0; j < (1<<i); j++) {
             vvv[gap * j] = 1;
         }
-        batch_encoder.encode(vvv, extractor);
+        batch_encoder.encode(vvv, extractor[i]);
+    }
+    NTL_EXEC_RANGE_END;
+
+    int counter = 0;
+    
+    // Plaintext extractor;
+    for (int i = 0; i < log2(ring_dim); i++) {
+        // for (int j = 0; j < ring_dim; j++) {
+        //     vvv[j] = 0;
+        // }
+        int gap = ring_dim / (1<<i);
+        // for (int j = 0; j < (1<<i); j++) {
+        //     vvv[gap * j] = 1;
+        // }
+        // batch_encoder.encode(vvv, extractor);
         Ciphertext extracted;
-        evaluator.multiply_plain(input, extractor, extracted);
+        evaluator.transform_to_ntt_inplace(extractor[i], input.parms_id());
+        evaluator.multiply_plain(input, extractor[i], extracted);
+        // evaluator.transform_from_ntt_inplace(extracted);
 
         int rotate_ind = gap / 2;
         if (rotate_ind == ring_dim / 2) {
@@ -1453,6 +1471,31 @@ void expandFirstToAll(SecretKey& sk, SEALContext context, Ciphertext& input, con
             evaluator.mod_switch_to_next_inplace(input);
         }
     }
+}
+
+
+Ciphertext sumUpEvaluation_ToPartyRange(SEALContext& context, vector<Ciphertext>& evaluated, const int group_size,
+                                        GaloisKeys& gal_keys, const int ring_dim = 32768, const int eval_size = 65536) {
+    Ciphertext result;
+
+    Evaluator evaluator(context);
+
+    int iter = log2(ring_dim / group_size); // need to fold iter times to map eval -> group
+
+    evaluator.add(evaluated[0], evaluated[1], result);
+
+    for (int i = 0; i < iter; i++) {
+        int rot_ind = ring_dim / (1<<(i+1)); // i=0, fold half, rot=16384; i=1, rot=8192
+        Ciphertext tmp;
+        if (rot_ind == ring_dim/2) {
+            evaluator.rotate_columns(result, gal_keys, tmp);
+        } else {
+            evaluator.rotate_rows(result, rot_ind, gal_keys, tmp);
+        }
+        evaluator.add_inplace(result, tmp);
+    }
+
+    return result;
 }
 
 
