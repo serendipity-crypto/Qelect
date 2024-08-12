@@ -28,7 +28,7 @@ int main() {
     int numcores = 8;
     NTL::SetNumThreads(numcores);
   
-    int group_size = 2048;
+    int group_size = 32768;
 
     // int committee_size = 2;
     
@@ -157,13 +157,15 @@ int main() {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+    uint64_t total_time = 0;
+
 
     // prepare ring_dim different tokens, each is of size ring_dim, in plaintext form
     // for simplicity, use just one token
     Plaintext tokens;
     vector<uint64_t> vvv(ring_dim);
     for (int j = 0; j < (int) ring_dim; j++) {
-        vvv[j] = 2;
+        vvv[j] = random_uint64() % p;
     }
     cout << "After param generation." << endl;
     batch_encoder.encode(vvv, tokens);
@@ -175,6 +177,9 @@ int main() {
 
 
 
+
+
+
     // for (int g = 0; g < group_size; g++) {
     //     for (int i = 0; i < ring_dim; i++) {
     //         vvv[i] = random_uint64() % p;
@@ -183,11 +188,12 @@ int main() {
     //     encryptor.encrypt(pp, tmp_random);
     //     saveCiphertext(tmp_random, g);
     // }
-    
 
+    // cout << "After preparing ciphertexts...\n";
     // cout << "Initial noise: " << decryptor.invariant_noise_budget(tmp_random) << endl;
 
-    
+
+    // time_start = chrono::high_resolution_clock::now();
     // NTL::SetNumThreads(numcores);
     // vector<Ciphertext> subsum_random_core(numcores);
     // uint64_t batch_add_size = group_size / numcores;
@@ -198,6 +204,7 @@ int main() {
     // NTL_EXEC_RANGE_END;
 
     // time_end = chrono::high_resolution_clock::now();
+    // total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
     // cout << "       after sum up: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 
     // Ciphertext random = EvalAddMany_inpace_modImprove_extract_multi_core(subsum_random_core, seal_context, bfv_secret_key);
@@ -209,6 +216,12 @@ int main() {
     encryptor.encrypt(pp, tmp_random);
     Ciphertext random = tmp_random;
 
+
+    encryptor.encrypt(tokens, tmp_random);
+    for (int i = 0; i < 14; i++) {
+        evaluator.mod_switch_to_next_inplace(tmp_random);
+    }
+    cout << "prepare: " << tmp_random.coeff_modulus_size() << endl;
 
 
 
@@ -232,9 +245,11 @@ int main() {
 
 	// Ciphertext extracted_all_slots = slotToCoeff_WOPrepreocess(seal_context, extracted, gal_keys_coeff, ring_dim, p, scalar, numcores);
 	time_end = chrono::high_resolution_clock::now();
-	cout << "	first : slotToCoeff_WOPrepreocess: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+	cout << "	extract and expand to all dimension: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	cout << decryptor.invariant_noise_budget(extracted_all_slots) << endl;
 	
+    time_start = chrono::high_resolution_clock::now();
 	evaluator.negate_inplace(extracted_all_slots); // [-r, -r, ..., -r]
     map<int, bool> raise_mod_1 = {{2, false}, {8, false}, {32, false}, {128, false}};
 	map<int, bool> raise_mod_2 = {{4, false}, {16, false}, {64, false}, {256, false}};
@@ -262,18 +277,23 @@ int main() {
     NTL_EXEC_RANGE_END;
 
 	time_end = chrono::high_resolution_clock::now();
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 	cout << "	raisePower: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	cout << decryptor.invariant_noise_budget(evaluated[0]) << endl;
 
+    time_start = chrono::high_resolution_clock::now();
     evaluated[0] = sumUpEvaluation_ToPartyRange(seal_context, evaluated, group_size, gal_keys);
     time_end = chrono::high_resolution_clock::now();
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 	cout << "	sumUpEvaluation_ToPartyRange: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 
     evaluator.mod_switch_to_next_inplace(evaluated[0]);
 	
     // NOTICE!!!!!!!!!!!!!! WE COULD DO BATCHING HERE!!!!!!!!!!!!!!!!!!!!! YEAH!!!!!!!!!!!!!!!!!!!!!
+    time_start = chrono::high_resolution_clock::now();
     evaluated[0] = slotToCoeff_WOPrepreocess(seal_context, evaluated[0], gal_keys_coeff, ring_dim, p, scalar, numcores);
 	time_end = chrono::high_resolution_clock::now();
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 	cout << "	second: slotToCoeff_WOPrepreocess: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	cout << decryptor.invariant_noise_budget(evaluated[0]) << endl;
 
@@ -281,7 +301,7 @@ int main() {
 	cout << evaluated[0].coeff_modulus_size() << endl;
 	cout << decryptor.invariant_noise_budget(evaluated[0]) << endl;
 
-
+    time_start = chrono::high_resolution_clock::now();
     vector<Ciphertext> expanded_for_batch(ring_dim/group_size); // how many batch one ring can hold, and each time we only use one of them
 
     if (ring_dim/group_size == 1) {
@@ -293,17 +313,27 @@ int main() {
     print_ct_to_vec(expanded_for_batch[0], seal_context, bfv_secret_key, 100);
 
     time_end = chrono::high_resolution_clock::now();
-    cout << "** [TIME] ** First level subExpand time: " << \
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+    cout << "       First level subExpand time: " << \
         chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 
     // ready for multi-core acceleration
+    time_start = chrono::high_resolution_clock::now();
     vector<Ciphertext> expanded_subtree_roots = subExpand(sk_expand, context_expand, parms_expand, expanded_for_batch[0], ring_dim,
-                                                                 gal_keys_expand, numcores); 
+                                                                 gal_keys_expand, numcores);
+    time_end = chrono::high_resolution_clock::now();
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+    cout << "       second expand core time: " << \
+        chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 
+    vector<Ciphertext> cached(numcores);
+    for (int i = 0; i < (int) expanded_subtree_roots.size(); i++) {
+        cached[i] = expanded_subtree_roots[i];
+    }
 
-    print_ct_to_vec(expanded_subtree_roots[0], seal_context, bfv_secret_key, 100);
-    cout << "haha?\n";
+    // print_ct_to_vec(expanded_subtree_roots[0], seal_context, bfv_secret_key, 100);
 
+    time_start = chrono::high_resolution_clock::now();
     vector<vector<Ciphertext>> expanded_leaf(numcores, vector<Ciphertext>(group_size/numcores));  
     vector<Ciphertext> token_subsum(numcores);                                             
     NTL_EXEC_RANGE(numcores, first, last);
@@ -312,10 +342,12 @@ int main() {
         expanded_leaf[i] = expand(context_expand, parms_expand, expanded_subtree_roots[i], ring_dim,
                                   gal_keys_expand, group_size/numcores);
 
-        cout << "????????????\n";
+        cout << "hhhhh\n";
+
         for (int j = 0; j < (int) expanded_leaf[i].size(); j++) {
-            evaluator.multiply_plain_inplace(expanded_leaf[i][j], tokens);
+            evaluator.multiply_plain(tmp_random, tokens, expanded_leaf[i][j]);
         }
+        cout << "???????\n";
 
         token_subsum[i] = EvalAddMany_inpace_modImprove_extract_multi_core(expanded_leaf[i], seal_context, bfv_secret_key);
     }
@@ -324,6 +356,7 @@ int main() {
     Ciphertext result = EvalAddMany_inpace_modImprove_extract_multi_core(token_subsum, seal_context, bfv_secret_key);
 
     time_end = chrono::high_resolution_clock::now();
+    total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
     cout << "** [TIME] ** Second + Leaf level expand + multi token time: " << \
           chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
     // total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
@@ -347,9 +380,8 @@ int main() {
 	// 	}
 	// }
 	cout << decryptor.invariant_noise_budget(result) << endl;
-	time_end = chrono::high_resolution_clock::now();
 
-	cout << "Total time: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+	cout << "Total time: " << total_time << endl;
 
     return 0;
 }
