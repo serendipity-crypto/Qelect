@@ -28,13 +28,13 @@ int main() {
     int numcores = 8;
     NTL::SetNumThreads(numcores);
   
-    int group_size = 32768;
+    int group_size = 2046;
 
     // int committee_size = 2;
     
     // int ring_dim = group_size; // for 200 people, can encrypt ring_dim / 200 Z_p element
     int ring_dim = 32768;
-    int n = 4;
+    int n = 32768;
     int p = 65537;
 
     
@@ -43,9 +43,9 @@ int main() {
     EncryptionParameters bfv_params(scheme_type::bfv);
     bfv_params.set_poly_modulus_degree(ring_dim);
     auto coeff_modulus = CoeffModulus::Create(ring_dim, { 
-                                                          60, 60, 60, 60, 60, 60,
-                                                          60, 60, 60, 60, 60, 60,
-                                                          60, 60, 60, 60, 60
+                                                          60, 60, 60, 60,
+                                                          60, 60, 60, 60,
+                                                          60, 60, 60, 60
                                                         });
     bfv_params.set_coeff_modulus(coeff_modulus);
     bfv_params.set_plain_modulus(p);
@@ -210,18 +210,12 @@ int main() {
     // Ciphertext random = EvalAddMany_inpace_modImprove_extract_multi_core(subsum_random_core, seal_context, bfv_secret_key);
     // cout << "Noise after sum up: " << decryptor.invariant_noise_budget(random) << endl;
     for (int i = 0; i < ring_dim; i++) {
-        vvv[i] = random_uint64() % p;
+        vvv[i] = random_uint64() % group_size;
     }
     batch_encoder.encode(vvv, pp);
     encryptor.encrypt(pp, tmp_random);
     Ciphertext random = tmp_random;
 
-
-    encryptor.encrypt(tokens, tmp_random);
-    for (int i = 0; i < 14; i++) {
-        evaluator.mod_switch_to_next_inplace(tmp_random);
-    }
-    cout << "prepare: " << tmp_random.coeff_modulus_size() << endl;
 
 
 
@@ -237,17 +231,18 @@ int main() {
 
     print_ct_to_vec(random, seal_context, bfv_secret_key, 10);
     
-    cout << decryptor.invariant_noise_budget(extracted) << endl;
+    cout << "initial noise: " << decryptor.invariant_noise_budget(extracted) << endl;
 
 	// expand random values to all slots
     expandFirstToAll(bfv_secret_key, seal_context, extracted, gal_keys, ring_dim);
     Ciphertext extracted_all_slots = extracted;
+    // print_ct_to_vec(extracted, seal_context, bfv_secret_key, 1000);
 
 	// Ciphertext extracted_all_slots = slotToCoeff_WOPrepreocess(seal_context, extracted, gal_keys_coeff, ring_dim, p, scalar, numcores);
 	time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 	cout << "	extract and expand to all dimension: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-	cout << decryptor.invariant_noise_budget(extracted_all_slots) << endl;
+	cout << "after fill: " << decryptor.invariant_noise_budget(extracted_all_slots) << endl;
 	
     time_start = chrono::high_resolution_clock::now();
 	evaluator.negate_inplace(extracted_all_slots); // [-r, -r, ..., -r]
@@ -262,55 +257,66 @@ int main() {
     }
     all_ones.data()[0] = 1;
 
-	vector<Ciphertext> evaluated(2);
-    NTL_EXEC_RANGE(2, first, last); // ring_dim = 32768, evaluate points: 65536, two batches
-    for (int c = first; c < last; c++) {
-        for (int i = 0; i < ring_dim; i++) {
-            vvv[i] = i + ring_dim*c;
-        }
-        batch_encoder.encode(vvv, pp);
-        evaluator.add_plain(extracted_all_slots, pp, evaluated[c]); // [-r, -r, ..., -r] + [0, 1, ..., n-1]
-        evaluated[c] = raisePowerToPrime(seal_context, relin_keys, evaluated[c], raise_mod_2, raise_mod_2, 256, 256, p);
-        evaluator.negate_inplace(evaluated[c]);
-        evaluator.add_plain_inplace(evaluated[c], all_ones);
+	// vector<Ciphertext> evaluated(2);
+    // NTL_EXEC_RANGE(2, first, last); // ring_dim = 32768, evaluate points: 65536, two batches
+    // for (int c = first; c < last; c++) {
+    //     for (int i = 0; i < ring_dim; i++) {
+    //         vvv[i] = i + ring_dim*c;
+    //     }
+    //     batch_encoder.encode(vvv, pp);
+    //     evaluator.add_plain(extracted_all_slots, pp, evaluated[c]); // [-r, -r, ..., -r] + [0, 1, ..., n-1]
+    //     evaluated[c] = raisePowerToPrime(seal_context, relin_keys, evaluated[c], raise_mod_2, raise_mod_2, 256, 256, p);
+    //     evaluator.negate_inplace(evaluated[c]);
+    //     evaluator.add_plain_inplace(evaluated[c], all_ones);
+    // }
+    // NTL_EXEC_RANGE_END;
+
+    Ciphertext evaluated;
+    for (int i = 0; i < ring_dim; i++) {
+        vvv[i] = i;
     }
-    NTL_EXEC_RANGE_END;
+    batch_encoder.encode(vvv, pp);
+    evaluator.add_plain(extracted_all_slots, pp, evaluated); // [-r, -r, ..., -r] + [0, 1, ..., n-1]
+    evaluated = raisePowerToPrime(seal_context, relin_keys, evaluated, raise_mod_2, raise_mod_2, 256, 256, p);
+    evaluator.negate_inplace(evaluated);
+    evaluator.add_plain_inplace(evaluated, all_ones);
 
 	time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 	cout << "	raisePower: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-	cout << decryptor.invariant_noise_budget(evaluated[0]) << endl;
+	cout << decryptor.invariant_noise_budget(evaluated) << endl;
 
     time_start = chrono::high_resolution_clock::now();
-    evaluated[0] = sumUpEvaluation_ToPartyRange(seal_context, evaluated, group_size, gal_keys);
+    sumUpEvaluation_ToPartyRange(seal_context, evaluated, group_size, gal_keys);
     time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 	cout << "	sumUpEvaluation_ToPartyRange: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 
-    evaluator.mod_switch_to_next_inplace(evaluated[0]);
+    // evaluator.mod_switch_to_next_inplace(evaluated);
 	
     // NOTICE!!!!!!!!!!!!!! WE COULD DO BATCHING HERE!!!!!!!!!!!!!!!!!!!!! YEAH!!!!!!!!!!!!!!!!!!!!!
     time_start = chrono::high_resolution_clock::now();
-    evaluated[0] = slotToCoeff_WOPrepreocess(seal_context, evaluated[0], gal_keys_coeff, ring_dim, p, scalar, numcores);
+    evaluated = slotToCoeff_WOPrepreocess(seal_context, evaluated, gal_keys_coeff, ring_dim, p, scalar, numcores);
 	time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 	cout << "	second: slotToCoeff_WOPrepreocess: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-	cout << decryptor.invariant_noise_budget(evaluated[0]) << endl;
+	cout << decryptor.invariant_noise_budget(evaluated) << endl;
 
-	
-	cout << evaluated[0].coeff_modulus_size() << endl;
-	cout << decryptor.invariant_noise_budget(evaluated[0]) << endl;
+	evaluator.mod_switch_to_next_inplace(evaluated);
+    evaluator.mod_switch_to_next_inplace(evaluated);
+	cout << evaluated.coeff_modulus_size() << endl;
+	cout << decryptor.invariant_noise_budget(evaluated) << endl;
+    print_ct_to_pl(evaluated, seal_context, bfv_secret_key, 128);
 
     time_start = chrono::high_resolution_clock::now();
     vector<Ciphertext> expanded_for_batch(ring_dim/group_size); // how many batch one ring can hold, and each time we only use one of them
 
     if (ring_dim/group_size == 1) {
-        expanded_for_batch[0] = evaluated[0];
+        expanded_for_batch[0] = evaluated;
     } else {
-        expanded_for_batch = subExpand(sk_expand, context_expand, parms_expand, evaluated[0], ring_dim, gal_keys_expand,
+        expanded_for_batch = subExpand(sk_expand, context_expand, parms_expand, evaluated, ring_dim, gal_keys_expand,
                                        ring_dim/group_size);
     }
-    print_ct_to_vec(expanded_for_batch[0], seal_context, bfv_secret_key, 100);
 
     time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
@@ -328,6 +334,7 @@ int main() {
 
     vector<Ciphertext> cached(numcores);
     for (int i = 0; i < (int) expanded_subtree_roots.size(); i++) {
+        // evaluator.mod_switch_to_next_inplace(expanded_subtree_roots[i]);
         cached[i] = expanded_subtree_roots[i];
     }
 
@@ -338,6 +345,7 @@ int main() {
     vector<Ciphertext> token_subsum(numcores);                                             
     NTL_EXEC_RANGE(numcores, first, last);
     for (int i = first; i < last; i++) {
+        cout << i << endl; 
         // expand each 1 out of the 8 subroots to leaf level
         expanded_leaf[i] = expand(context_expand, parms_expand, expanded_subtree_roots[i], ring_dim,
                                   gal_keys_expand, group_size/numcores);
