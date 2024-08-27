@@ -1051,13 +1051,14 @@ Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& inp
 
     vector<Ciphertext> result(sq_rt);
 
+    time_start = chrono::high_resolution_clock::now();
     int core_share = sq_rt / numcores;
     NTL_EXEC_RANGE(numcores, first, last);
     for (int c  = first; c < last; c++) {
         for (int iter = c * core_share; iter < (c+1) * core_share; iter++) {
             for (int j = 0; j < (int) input_sqrt_list.size(); j++) {
 
-                time_start = chrono::high_resolution_clock::now();
+                // time_start = chrono::high_resolution_clock::now();
                 vector<uint64_t> U_tmp(degree);
                 for (int i = 0; i < degree; i++) {
                     int row_index = (i-iter) % (degree/2) < 0 ? (i-iter) % (degree/2) + degree/2 : (i-iter) % (degree/2);
@@ -1078,8 +1079,8 @@ Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& inp
                 e = chrono::high_resolution_clock::now();
                 total_U += chrono::duration_cast<chrono::microseconds>(e - s).count();
 
-                time_end = chrono::high_resolution_clock::now();
-                U_time_multi_core += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
+                // time_end = chrono::high_resolution_clock::now();
+                // U_time_multi_core += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 
                 if (j == 0) {
                     evaluator.multiply_plain(input_sqrt_list[j], U_plain, result[iter]);
@@ -1101,6 +1102,8 @@ Ciphertext slotToCoeff_WOPrepreocess(const SEALContext& context, Ciphertext& inp
         evaluator.rotate_rows_inplace(result[iter], 1, gal_keys);
         evaluator.add_inplace(result[iter-1], result[iter]);
     }
+    time_end = chrono::high_resolution_clock::now();
+    cout << "		real second time: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 
     U_time += total_U;
     cout << "   TOTAL process U time: " << total_U << endl;
