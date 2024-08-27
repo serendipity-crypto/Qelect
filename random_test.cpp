@@ -103,7 +103,7 @@ int main() {
 	for (int i = 0; i < (int) poly_modulus_degree; i++) {
 		pl.data()[i] = 0;
 	}
-	pl.data()[2] = 1;
+	pl.data()[2] = modInverse(32768, t);
 	Ciphertext ran;
 	encryptor.encrypt(pl, ran);
 
@@ -118,18 +118,44 @@ int main() {
 
 	time_start = chrono::high_resolution_clock::now();
 	
+	// uint64_t inv = modInverse(32768, 65537);
+
 	NTL::SetNumThreads(8);
 	vector<vector<Ciphertext>> leaf_core(8, vector<Ciphertext>(32768/8));
 	NTL_EXEC_RANGE(8, first, last);
     for (int i = first; i < last; i++) {
 		leaf_core[i] = expand(context_expand, parms_expand, expanded_subtree_leaves[i], poly_modulus_degree, gal_keys_expand, poly_modulus_degree/8);
 		
+
 		for (int j = 0; j < (int) leaf_core[i].size(); j++) {
-            evaluator.multiply_plain_inplace(leaf_core[i][j], pl);
+			Plaintext tmp;
+			tmp.resize(poly_modulus_degree);
+			tmp.parms_id() = parms_id_zero;
+			for (int k = 0; k < (int) poly_modulus_degree; k++) {
+				tmp.data()[k] = 0;
+			}
+			tmp.data()[0] = (i+1) % t;
+			// tmp.data()[0] = 0;
+            evaluator.multiply_plain_inplace(leaf_core[i][j], tmp);
+
+			// evaluator.multiply_plain_inplace(leaf_core[i][j], pl);
         }
 
 	}
 	NTL_EXEC_RANGE_END;
+
+	for (int iter = 0; iter < 8; iter++) {
+		for (int i = 1; i < (int) leaf_core[0].size(); i++) {
+			evaluator.add_inplace(leaf_core[iter][0], leaf_core[iter][i]);
+		}
+		if (iter !=0) {
+			evaluator.add_inplace(leaf_core[0][0], leaf_core[iter][0]);
+		}
+	}
+
+	cout << decryptor.invariant_noise_budget(leaf_core[0][0]) << endl;
+
+	print_ct_to_vec(leaf_core[0][0], context_expand, sk_expand, 100);
 
 	time_end = chrono::high_resolution_clock::now();
 	cout << "time: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;

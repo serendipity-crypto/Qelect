@@ -28,7 +28,7 @@ int main() {
     int numcores = 8;
     NTL::SetNumThreads(numcores);
   
-    int group_size = 2046;
+    int group_size = 32768;
 
     // int committee_size = 2;
     
@@ -132,24 +132,24 @@ int main() {
 
     // gal keys for oblivious expansion
     vector<Modulus> coeff_modulus_expand = coeff_modulus;
-    // coeff_modulus_expand.erase(coeff_modulus_expand.begin() + 2, coeff_modulus_expand.end()-1);
-    EncryptionParameters parms_expand = bfv_params;
-    parms_expand.set_coeff_modulus(coeff_modulus_expand);
-    SEALContext context_expand = SEALContext(parms_expand, true, sec_level_type::none);
+	coeff_modulus_expand.erase(coeff_modulus_expand.begin() + 2, coeff_modulus_expand.end()-1);
+	EncryptionParameters parms_expand = bfv_params;
+	parms_expand.set_coeff_modulus(coeff_modulus_expand);
+	SEALContext context_expand = SEALContext(parms_expand, true, sec_level_type::none);
 
-    SecretKey sk_expand;
-    sk_expand.data().resize(coeff_modulus_expand.size() * ring_dim);
-    sk_expand.parms_id() = context_expand.key_parms_id();
-    util::set_poly(bfv_secret_key.data().data(), ring_dim, coeff_modulus_expand.size() - 1, sk_expand.data().data());
-    util::set_poly(
-            bfv_secret_key.data().data() + ring_dim * (coeff_modulus.size() - 1), ring_dim, 1,
-            sk_expand.data().data() + ring_dim * (coeff_modulus_expand.size() - 1));
-    KeyGenerator keygen_expand(context_expand, sk_expand);
-    vector<uint32_t> galois_elts;
-    for (int i = 0; i < ceil(log2(ring_dim)); i++) {
-        galois_elts.push_back((ring_dim + exponentiate_uint(2, i)) / exponentiate_uint(2, i));
-    }
-    keygen_expand.create_galois_keys(galois_elts, gal_keys_expand);
+	SecretKey sk_expand;
+	sk_expand.data().resize(coeff_modulus_expand.size() * ring_dim);
+	sk_expand.parms_id() = context_expand.key_parms_id();
+	util::set_poly(bfv_secret_key.data().data(), ring_dim, coeff_modulus_expand.size() - 1, sk_expand.data().data());
+	util::set_poly(
+			bfv_secret_key.data().data() + ring_dim * (coeff_modulus.size() - 1), ring_dim, 1,
+			sk_expand.data().data() + ring_dim * (coeff_modulus_expand.size() - 1));
+	KeyGenerator keygen_expand(context_expand, sk_expand);
+	vector<uint32_t> galois_elts;
+	for (int i = 0; i < ceil(log2(ring_dim)); i++) {
+		galois_elts.push_back((ring_dim + exponentiate_uint(2, i)) / exponentiate_uint(2, i));
+	}
+	keygen_expand.create_galois_keys(galois_elts, gal_keys_expand);
 
 
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -300,13 +300,13 @@ int main() {
 	time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
 	cout << "	second: slotToCoeff_WOPrepreocess: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
-	cout << decryptor.invariant_noise_budget(evaluated) << endl;
+	// cout << decryptor.invariant_noise_budget(evaluated) << endl;
 
-	evaluator.mod_switch_to_next_inplace(evaluated);
+	// evaluator.mod_switch_to_next_inplace(evaluated);
     evaluator.mod_switch_to_next_inplace(evaluated);
 	cout << evaluated.coeff_modulus_size() << endl;
 	cout << decryptor.invariant_noise_budget(evaluated) << endl;
-    print_ct_to_pl(evaluated, seal_context, bfv_secret_key, 128);
+    // print_ct_to_pl(evaluated, seal_context, bfv_secret_key, 128);
 
     time_start = chrono::high_resolution_clock::now();
     vector<Ciphertext> expanded_for_batch(ring_dim/group_size); // how many batch one ring can hold, and each time we only use one of them
@@ -345,23 +345,21 @@ int main() {
     vector<Ciphertext> token_subsum(numcores);                                             
     NTL_EXEC_RANGE(numcores, first, last);
     for (int i = first; i < last; i++) {
-        cout << i << endl; 
+        // cout << i << endl; 
         // expand each 1 out of the 8 subroots to leaf level
         expanded_leaf[i] = expand(context_expand, parms_expand, expanded_subtree_roots[i], ring_dim,
                                   gal_keys_expand, group_size/numcores);
 
-        cout << "hhhhh\n";
-
         for (int j = 0; j < (int) expanded_leaf[i].size(); j++) {
-            evaluator.multiply_plain(tmp_random, tokens, expanded_leaf[i][j]);
+            // evaluator.multiply_plain(tmp_random, tokens, expanded_leaf[i][j]);
+            evaluator.multiply_plain_inplace(expanded_leaf[i][j], tokens);
         }
-        cout << "???????\n";
-
         token_subsum[i] = EvalAddMany_inpace_modImprove_extract_multi_core(expanded_leaf[i], seal_context, bfv_secret_key);
     }
     NTL_EXEC_RANGE_END;
 
     Ciphertext result = EvalAddMany_inpace_modImprove_extract_multi_core(token_subsum, seal_context, bfv_secret_key);
+    // print_ct_to_vec(result, seal_context, bfv_secret_key, 100);
 
     time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
