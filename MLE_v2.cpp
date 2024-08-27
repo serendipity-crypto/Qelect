@@ -299,7 +299,7 @@ int main() {
     evaluated = slotToCoeff_WOPrepreocess(seal_context, evaluated, gal_keys_coeff, ring_dim, p, scalar, numcores);
 	time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
-	cout << "	second: slotToCoeff_WOPrepreocess: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
+	// cout << "	second: slotToCoeff_WOPrepreocess: " << chrono::duration_cast<chrono::microseconds>(time_end - time_start).count() << endl;
 	// cout << decryptor.invariant_noise_budget(evaluated) << endl;
 
 	// evaluator.mod_switch_to_next_inplace(evaluated);
