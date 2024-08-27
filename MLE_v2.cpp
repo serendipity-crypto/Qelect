@@ -28,7 +28,7 @@ int main() {
     int numcores = 8;
     NTL::SetNumThreads(numcores);
   
-    int group_size = 32768;
+    int group_size = 128;
 
     // int committee_size = 2;
     
@@ -360,6 +360,11 @@ int main() {
 
     Ciphertext result = EvalAddMany_inpace_modImprove_extract_multi_core(token_subsum, seal_context, bfv_secret_key);
     // print_ct_to_vec(result, seal_context, bfv_secret_key, 100);
+
+    stringstream data_streamdg;
+    auto digsize = result.save(data_streamdg);
+	cout << "Digest size: " << digsize << " bytes" << endl;
+
 
     time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
