@@ -375,12 +375,12 @@ int main() {
 	// simulate the file saving
 	ofstream final_ct_bytes, part_dec_bytes;
 
-	final_ct_bytes.open("../data/final_ct_bytes.txt"");
+	final_ct_bytes.open("../data/final_ct_bytes.txt");
 	final_ct_bytes << data_streamdg.rdbuf();
 	final_ct_bytes.close();
 
 	result.save(data_streamdg)
-	part_dec_bytes.open("../data/final_ct_bytes.txt"");
+	part_dec_bytes.open("../data/final_ct_bytes.txt");
 	part_dec_bytes << data_streamdg.rdbuf();
 	part_dec_bytes.close();
 	
