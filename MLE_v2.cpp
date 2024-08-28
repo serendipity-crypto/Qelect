@@ -361,6 +361,13 @@ int main() {
     Ciphertext result = EvalAddMany_inpace_modImprove_extract_multi_core(token_subsum, seal_context, bfv_secret_key);
     // print_ct_to_vec(result, seal_context, bfv_secret_key, 100);
 
+    vector<Ciphertext> final_par_dec(group_size);
+    for (int i = 0; i < group_size; i++) {
+        final_par_dec[i] = result;
+    }
+
+    result = EvalAddMany_inpace_modImprove_extract_multi_core(token_subsum, seal_context, bfv_secret_key);
+
     stringstream data_streamdg;
     // cout << result.coeff_modulus_size() << endl;
     auto digsize = result.save(data_streamdg);
