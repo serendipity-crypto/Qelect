@@ -372,6 +372,19 @@ int main() {
     // cout << result.coeff_modulus_size() << endl;
     auto digsize = result.save(data_streamdg);
 
+	// simulate the file saving
+	ofstream final_ct_bytes, part_dec_bytes;
+
+	final_ct_bytes.open("../data/final_ct_bytes.txt"");
+	final_ct_bytes << data_streamdg.rdbuf();
+	final_ct_bytes.close();
+
+	result.save(data_streamdg)
+	part_dec_bytes.open("../data/final_ct_bytes.txt"");
+	part_dec_bytes << data_streamdg.rdbuf();
+	part_dec_bytes.close();
+	
+
 
     time_end = chrono::high_resolution_clock::now();
     total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
