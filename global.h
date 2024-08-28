@@ -17,3 +17,7 @@ int expand_core_share = 8192; // 32GB mem can only tolerate 8192 ciphertexts bei
 uint64_t loading_time;
 uint64_t U_time;
 uint64_t U_time_multi_core;
+
+
+uint64_t total_time = 0;
+uint64_t preprocess_time = 0;
