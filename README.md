@@ -7,14 +7,14 @@ sudo apt-get update && sudo apt-get install build-essential # if needed
 sudo apt-get install autoconf # if no autoconf
 sudo apt-get install cmake # if no cmake
 sudo apt-get install libgmp3-dev # if no gmp
-sudo apt-get install libntl-dev=11.4.3-1build1 # if no ntl
+sudo apt-get install libntl-dev=11.4.3-1build1 # if no ntl, or sudo apt-get install libntl-dev is version not found
 
 # change build_path to where you want the dependency libraries installed
 MPSDIR=~
 BUILDDIR=$MPSDIR/MPS/build
 
 # used for data type definitions and distribution, generators, etc
-cd $MPSDIR && git clone -b v1.11.3 https://gitlab.com/palisade/palisade-release
+cd $MPSDIR && git clone -b v1.11.9 https://gitlab.com/palisade/palisade-release
 cd palisade-release
 mkdir build
 cd build
