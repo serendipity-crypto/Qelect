@@ -24,6 +24,7 @@ RUN git clone https://github.com/wyunhao/SEAL \
     && cmake --build build -- -j8 && cmake --install build
 # Build the MPS project
 RUN cd /home/ubuntu/MPS && cd build \
+    && mkdir ../data && mkdir ../data/perm \
     && cmake .. -DCMAKE_PREFIX_PATH=/home/ubuntu/MPS/build \
     && make -j8
 # Set entrypoint
