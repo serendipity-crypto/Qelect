@@ -1,5 +1,47 @@
-# MPS
 
+
+
+
+# MPS 
+## The instructions to run the project via Dockerfile:
+```
+# install docker
+sudo apt-get update
+sudo apt-get install -y ca-certificates curl
+# might not needed, ignore for now: sudo apt-get install -y -m 0755 -d /etc/apt/keyrings
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+
+echo \
+  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+  $(. /etc/os-release && echo "$UBUNTU_CODENAME") stable" | \
+  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+
+# execute the MPE
+# download the zip file and unzip the folder under MPS
+cd MPS
+sudo docker build --no-cache -t mps_project .
+sudo docker run mps_project
+```
+
+An example output is as follows:
+```
+After param generation.
+Initial noise budget: 613
+Lefted noise budget: 47
+Total broadcast communication size (for each party): 2147 MB.
+---------------------------------
+Total number of parties: 1024
+Preprocessed time      : 136201928 us.
+Total time             : 5921790 us.
+```
+The local computation time for a single party, with party size = 1024, is ~5.9 seconds.
+
+## The instructions to run the project via cmake:
 ```
 # If permission required, please add sudo before the commands as needed
 
