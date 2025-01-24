@@ -118,7 +118,7 @@ int main() {
 	EncryptionParameters parms_coeff_second = bfv_params;
 	parms_coeff_second.set_coeff_modulus(coeff_modulus_coeff_second);
 	SEALContext context_coeff_second = SEALContext(parms_coeff_second, true, sec_level_type::none);
-
+	
 	SecretKey sk_coeff_second;
 	sk_coeff_second.data().resize(coeff_modulus_coeff_second.size() * ring_dim);
 	sk_coeff_second.parms_id() = context_coeff_second.key_parms_id();
@@ -196,7 +196,7 @@ int main() {
     	evaluator.multiply_plain(random, pp, extracted);
     
         // cout << "Tested random indices... : ";
-        print_ct_to_vec(random, seal_context, bfv_secret_key, 10);
+        // print_ct_to_vec(random, seal_context, bfv_secret_key, 10);
         
         cout << "Initial noise budget: " << decryptor.invariant_noise_budget(extracted) << endl;
     
@@ -242,11 +242,7 @@ int main() {
         time_end = chrono::high_resolution_clock::now();
         total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
     
-
-	cout << "test1\n";
         evaluated = slotToCoeff_WOPrepreocess(seal_context, evaluated, gal_keys_coeff, ring_dim, p, scalar, numcores, group_size);
-
-	cout << "test2\n";
 
         evaluator.mod_switch_to_next_inplace(evaluated);
     
@@ -339,7 +335,7 @@ int main() {
     	cout << "Lefted noise budget: " << decryptor.invariant_noise_budget(result) << endl;
         cout << "Total broadcast communication size (for each party): " << digsize * group_size * 2 / 1000000 << " MB." << endl;
     
-        cout << "\n---------------------------------\n";
+        cout << "---------------------------------\n";
         cout << "Total number of parties: " << group_size << endl;
         cout << "Preprocessed time      : " << preprocess_time << " us." << endl;
     	cout << "Total time             : " << total_time << " us." << endl << endl << endl;
