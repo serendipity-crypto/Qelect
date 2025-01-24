@@ -157,7 +157,7 @@ int main() {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-    vector<int> group_size_list = {4, 8, 16, 32, 64, 128, 256, 512, 1024};
+	vector<int> group_size_list = {32, 64, 128, 256, 512, 1024, 2048};
 
     for (int i = 0 ; i < (int) group_size_list.size(); i++) {
         int group_size = group_size_list[i];
@@ -195,7 +195,7 @@ int main() {
     	batch_encoder.encode(vvv, pp);
     	evaluator.multiply_plain(random, pp, extracted);
     
-        cout << "Tested random indices... : ";
+        // cout << "Tested random indices... : ";
         print_ct_to_vec(random, seal_context, bfv_secret_key, 10);
         
         cout << "Initial noise budget: " << decryptor.invariant_noise_budget(extracted) << endl;
@@ -242,10 +242,12 @@ int main() {
         time_end = chrono::high_resolution_clock::now();
         total_time += chrono::duration_cast<chrono::microseconds>(time_end - time_start).count();
     
-    
+
+	cout << "test1\n";
         evaluated = slotToCoeff_WOPrepreocess(seal_context, evaluated, gal_keys_coeff, ring_dim, p, scalar, numcores, group_size);
-    
-    
+
+	cout << "test2\n";
+
         evaluator.mod_switch_to_next_inplace(evaluated);
     
         time_start = chrono::high_resolution_clock::now();
@@ -340,7 +342,7 @@ int main() {
         cout << "\n---------------------------------\n";
         cout << "Total number of parties: " << group_size << endl;
         cout << "Preprocessed time      : " << preprocess_time << " us." << endl;
-    	cout << "Total time             : " << total_time << " us." << endl;
+    	cout << "Total time             : " << total_time << " us." << endl << endl << endl;
     }
 
     return 0;
