@@ -2,7 +2,26 @@
 
 
 
-# MPS 
+# Qelect: Lattice-based Single Secret Leader Election Made Practical
+
+## Abstract:
+In a single secret leader election (SSLE) protocol, all parties collectively and obliviously elect one leader. No one else should learn its identity unless it reveals itself as the leader.
+The problem is first formalized by Boneh et al. (AFT'20), which proposes an efficient construction based on the Decision Diffie-Hellman (DDH) assumption.
+Considering the potential risk of quantum computers, several follow-ups focus on designing a post-quantum secure SSLE protocol based on pure lattices or fully homomorphic encryption. However, no concrete benchmarks demonstrate the feasibility of deploying such heavy cryptographic primitives.
+
+In this work, we present Qelect, the first practical constant-round post-quantum secure SSLE protocol.
+We first adapt the commitment scheme in Boneh et al. (AFT'23) into a multi-party randomizable commitment scheme, and propose our novel construction based on an adapted version of ring learning with errors (RLWE) problem.
+We then use it as a building block and construct a constant-round single secret leader election (crSSLE) scheme.
+We utilize the single instruction multiple data (SIMD) property of a specific threshold fully homomorphic encryption (tFHE) scheme to evaluate our election circuit efficiently.
+Finally, we built Qelect from the crSSLE scheme, with performance optimizations including a preprocessing phase to amortize the local computation runtime and a retroactive detection phase to avoid the heavy zero-knowledge proofs during the election phase.
+Qelect achieves asymptotic improvements and is concretely practical.
+We implemented a prototype of Qelect and evaluated its performance in a WAN.
+Qelect is at least two orders of magnitude faster than the state-of-the-art.
+
+## License
+
+The Qelect library is developed by [Yunhao Wang](https://scholar.google.com/citations?user=-3s-pjIAAAAJ&hl=en) and [Fan Zhang](https://www.fanzhang.me/), and is released under the MIT License (see the LICENSE file).
+
 ## The instructions to run the project via Dockerfile:
 ```
 # install docker
