@@ -22,6 +22,12 @@ Qelect is at least two orders of magnitude faster than the state-of-the-art.
 
 The Qelect library is developed by [Yunhao Wang](https://scholar.google.com/citations?user=-3s-pjIAAAAJ&hl=en) and [Fan Zhang](https://www.fanzhang.me/), and is released under the MIT License (see the LICENSE file).
 
+## Descriptions of library
+The main simulation code is contained in ```MPE_docker_version.cpp```, with ```regevEncryption.h``` including the assistant functions for (R)LWE encryption scheme  and ```util.h``` including all other assistant functions.
+```global.h``` is used to share common parameters among scripts.
+```execute_commands.sh``` is used to simulate the communication between multiple instances when analyzing the communication time under LAN/WAN setting.
+
+
 ## The instructions to run the project via Dockerfile:
 ```
 # install docker
