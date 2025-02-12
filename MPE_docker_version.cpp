@@ -299,8 +299,8 @@ int main() {
     
         result = EvalAddMany_inpace_modImprove_extract_multi_core(token_subsum, seal_context, bfv_secret_key);
     
-     //    stringstream data_streamdg;
-     //    auto digsize = result.save(data_streamdg);
+        stringstream data_streamdg;
+        auto digsize = result.save(data_streamdg);
     
     	// // simulate the file saving
     	// ofstream final_ct_bytes, part_dec_bytes;
