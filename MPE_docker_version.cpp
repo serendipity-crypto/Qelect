@@ -299,31 +299,31 @@ int main() {
     
         result = EvalAddMany_inpace_modImprove_extract_multi_core(token_subsum, seal_context, bfv_secret_key);
     
-        stringstream data_streamdg;
-        auto digsize = result.save(data_streamdg);
+     //    stringstream data_streamdg;
+     //    auto digsize = result.save(data_streamdg);
     
-    	// simulate the file saving
-    	ofstream final_ct_bytes, part_dec_bytes;
+    	// // simulate the file saving
+    	// ofstream final_ct_bytes, part_dec_bytes;
     
-    	final_ct_bytes.open("../data/final_ct_bytes.txt");
-    	final_ct_bytes << data_streamdg.rdbuf();
-    	final_ct_bytes.close();
+    	// final_ct_bytes.open("../data/final_ct_bytes.txt");
+    	// final_ct_bytes << data_streamdg.rdbuf();
+    	// final_ct_bytes.close();
     
-    	result.save(data_streamdg);
-    	part_dec_bytes.open("../data/final_ct_bytes.txt");
-    	part_dec_bytes << data_streamdg.rdbuf();
-    	part_dec_bytes.close();
+    	// result.save(data_streamdg);
+    	// part_dec_bytes.open("../data/final_ct_bytes.txt");
+    	// part_dec_bytes << data_streamdg.rdbuf();
+    	// part_dec_bytes.close();
     
-        // simulate the file loading
-        for (int i = 0; i < 2 * group_size; i++ ) {
-            ifstream datafile;
-            datafile.open ("../data/final_ct_bytes.txt");
-            stringstream buf;
-            buf << datafile.rdbuf();
+     //    // simulate the file loading
+     //    for (int i = 0; i < 2 * group_size; i++ ) {
+     //        ifstream datafile;
+     //        datafile.open ("../data/final_ct_bytes.txt");
+     //        stringstream buf;
+     //        buf << datafile.rdbuf();
             
-            result.load(seal_context, buf);
-            datafile.close();
-        }
+     //        result.load(seal_context, buf);
+     //        datafile.close();
+     //    }
     
         /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     	
