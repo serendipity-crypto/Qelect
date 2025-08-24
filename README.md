@@ -29,8 +29,9 @@ The main simulation code is contained in ```MPE_docker_version.cpp```, with ```r
 
 
 ## The instructions to run the project via Dockerfile:
+
+### install docker
 ```
-# install docker
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl
 # might not needed, ignore for now: sudo apt-get install -y -m 0755 -d /etc/apt/keyrings
@@ -44,13 +45,15 @@ echo \
 
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
 
-
-# execute the MPE
+### execute the qelect
+```
 # download the zip file and unzip the folder under MPS
-cd MPS
-sudo docker build --no-cache -t mps_project .
-sudo docker run mps_project
+git clone --depth 1 https://github.com/serendipity-crypto/Qelect.git qelect
+cd qelect
+sudo docker build --no-cache -t qelect_project .
+sudo docker run qelect_project
 ```
 
 An example output is as follows:

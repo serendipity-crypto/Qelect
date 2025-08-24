@@ -25,7 +25,7 @@ ability between public keys and final winner tokens).
 
 int main() {
 
-    int numcores = 8;
+    int numcores = 1;
     NTL::SetNumThreads(numcores);
   
     // int group_size = 1024;
@@ -157,7 +157,7 @@ int main() {
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-	vector<int> group_size_list = {32, 64, 128, 256, 512, 1024, 2048};
+	vector<int> group_size_list = {2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
 
     for (int i = 0 ; i < (int) group_size_list.size(); i++) {
         int group_size = group_size_list[i];
